@@ -1,0 +1,50 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+        language_version: python3.10
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+  - repo: https://github.com/PyCQA/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        name: isort (python)
+        args: ["--profile", "black", "--line-length", "100"]
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: mypy .
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: pytest
+        name: pytest (quick)
+        entry: python -m pytest -q
+        language: system
+        pass_filenames: false
+        types: [python]
+
+default_language_version:
+  python: python3.10
+
+default_stages: [commit]
+
+exclude: |
+  (?x)(
+    ^\.pytest_cache/
+    | ^docs/schema/.*\.json$
+  )

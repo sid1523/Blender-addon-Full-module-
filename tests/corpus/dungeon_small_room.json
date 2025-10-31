@@ -1,0 +1,31 @@
+{
+  "version": "1.0.0",
+  "domain": "procedural_dungeon",
+  "units": "meters",
+  "seed": 101,
+  "metadata": { "quality_mode": "balanced", "hardware_profile": "gpu_8gb" },
+  "grid": { "cell_size_m": 2.0, "dimensions": { "cols": 12, "rows": 10 } },
+  "objects": [
+    { "id": "room_a", "type": "room", "grid_cell": { "col": 2, "row": 2 }, "properties": { "width_cells": 4, "height_cells": 3 }, "material": "stone_wall", "collection": "geometry" },
+    { "id": "corridor_e1", "type": "corridor_segment", "grid_cell": { "col": 6, "row": 3 }, "properties": { "length_cells": 4, "direction": "east" }, "material": "stone_floor", "collection": "geometry" },
+    { "id": "door_a", "type": "door", "grid_cell": { "col": 6, "row": 3 }, "properties": { "style": "wooden" }, "material": "wood_oak", "collection": "geometry" },
+    { "id": "table_1", "type": "prop_instance", "position": [8.0, 6.0, 0.0], "rotation_euler": [0.0, 0.0, 0.1], "scale": [1.0, 1.0, 1.0], "properties": { "prop_asset": "tavern_table" }, "material": "wood_oak", "collection": "props" }
+  ],
+  "lighting": [
+    { "type": "sun", "position": [5.0, 5.0, 10.0], "rotation_euler": [0.8, 0.0, 0.0], "intensity": 2.5, "color_rgb": [1.0, 0.98, 0.9] },
+    { "type": "point", "position": [8.0, 6.0, 2.5], "intensity": 50.0, "color_rgb": [1.0, 0.85, 0.6] }
+  ],
+  "camera": { "position": [0.0, -15.0, 7.0], "rotation_euler": [1.2, 0.0, 0.0], "fov_deg": 65.0 },
+  "materials": [
+    { "name": "stone_wall", "pbr": { "base_color": [0.4, 0.4, 0.45], "roughness": 0.8, "metallic": 0.0 } },
+    { "name": "stone_floor", "pbr": { "base_color": [0.35, 0.35, 0.4], "roughness": 0.7, "metallic": 0.0 } },
+    { "name": "wood_oak", "pbr": { "base_color": [0.55, 0.38, 0.22], "roughness": 0.6, "metallic": 0.0 } }
+  ],
+  "collections": [
+    { "name": "geometry", "purpose": "geometry" },
+    { "name": "props", "purpose": "props" },
+    { "name": "lighting", "purpose": "lighting" },
+    { "name": "physics", "purpose": "physics" }
+  ],
+  "constraints": { "min_path_length_cells": 10, "require_traversable_start_to_goal": true, "max_polycount": 200000 }
+}

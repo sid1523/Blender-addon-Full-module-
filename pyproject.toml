@@ -1,0 +1,92 @@
+[project]
+name = "canvas3d"
+version = "0.1.0"
+description = "Canvas3D: deterministic scene spec validation and Blender add-on generator"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Canvas3D Team" }]
+keywords = ["blender", "procedural", "scene", "generation", "validation", "dungeon"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Operating System :: OS Independent",
+  "Topic :: Multimedia :: Graphics",
+  "Topic :: Software Development :: Libraries :: Python Modules"
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+  "ruff>=0.5.0",
+  "black>=24.0.0",
+  "isort>=5.12.0",
+  "mypy>=1.8.0"
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["canvas3d*", "tools*"]
+exclude = ["**/.pytest_cache/**"]
+
+[tool.setuptools.package-data]
+"canvas3d" = ["ui/frontend/**"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+# Enable common rule sets: pyflakes/pycodestyle/imports/bugbear/upgrade/security/naming/annotations/complexity
+select = ["E", "F", "I", "B", "UP", "S", "N", "ANN", "C90"]
+ignore = [
+  "E501",  # handled by line-length
+]
+exclude = [
+  "**/.pytest_cache/**",
+  "docs/schema/*.json"
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+exclude = '''
+(
+  \.pytest_cache
+  | docs/schema
+)
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+src_paths = ["canvas3d", "tools", "tests"]
+
+[tool.mypy]
+python_version = "3.10"
+strict_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+check_untyped_defs = true
+disallow_any_generics = false
+exclude = "(^tests/|^tools/|^docs/)"
+# Blender stubs are optional; allow imports to fail during CI dry-runs via conditional paths in code
+follow_imports = "skip"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["canvas3d"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

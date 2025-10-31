@@ -1,0 +1,5 @@
+{
+  "name": "Blender Procedural World Generator",
+  "description": "An AI assistant to generate procedural 3D world 'recipes' in JSON format from a text prompt, designed to be used with a Blender scripting add-on.",
+  "requestFramePermissions": []
+}
