@@ -2,6 +2,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import type { TerrainFeature, ScatterObject, Biome, FoliageProperties, SeasonalVariations, LightingConfig, CameraConfig, WeatherConfig, BakingConfig, PostProcessingConfig, VegetationConfig } from "../App";
 
+// TODO: API key is exposed here. This should be handled by a backend proxy.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
 export async function enhancePrompt(originalPrompt: string): Promise<string> {
@@ -30,9 +31,12 @@ export async function enhancePrompt(originalPrompt: string): Promise<string> {
     } catch (error) {
         console.error("Error calling Gemini API for prompt enhancement:", error);
         if (error instanceof Error) {
-            throw new Error(`Gemini API Error: ${error.message}`);
+            if (error.message.includes('API key not valid')) {
+                throw new Error(`Invalid API Key. Please check your configuration.`);
+            }
+            throw new Error(`Failed to enhance prompt. Gemini API Error: ${error.message}`);
         }
-        throw new Error("An unexpected error occurred while enhancing the prompt.");
+        throw new Error("An unexpected error occurred while enhancing the prompt. Please check the console for details.");
     }
 }
 
@@ -66,7 +70,13 @@ export async function generateColorPalette(prompt: string): Promise<string[]> {
         return result.palette;
     } catch(error) {
         console.error("Error generating color palette:", error);
-        throw new Error("Failed to generate a color palette from the prompt.");
+        if (error instanceof Error) {
+            if (error.message.includes('API key not valid')) {
+                throw new Error(`Invalid API Key. Please check your configuration.`);
+            }
+            throw new Error(`Failed to generate color palette. Gemini API Error: ${error.message}`);
+        }
+        throw new Error("An unexpected error occurred while generating the color palette. Please check the console for details.");
     }
 }
 
@@ -452,9 +462,22 @@ function validateGeneratedJSON(jsonData: any): { valid: boolean; errors: string[
         }
     };
     checkColors(jsonData, 'root');
+
+    if (!jsonData.materials || !Array.isArray(jsonData.materials)) {
+        errors.push("Missing or invalid 'materials' array in the generated JSON.");
+        return { valid: false, errors };
+    }
     
-    const materialNames = new Set(jsonData.materials?.map((m: any) => m.name) || []);
-    const checkMaterialRef = (ref: string, context: string) => { if (ref && !materialNames.has(ref)) { errors.push(`${context} references undefined material: '${ref}'`); } };
+    const materialNames = new Set(jsonData.materials.map((m: any) => m.name));
+    if (materialNames.size !== jsonData.materials.length) {
+        errors.push("Material names must be unique.");
+    }
+
+    const checkMaterialRef = (ref: string, context: string) => {
+        if (ref && !materialNames.has(ref)) {
+            errors.push(`${context} references undefined material: '${ref}'`);
+        }
+    };
     
     jsonData.terrain?.features?.forEach((f: any, i: number) => checkMaterialRef(f.materialRef, `Terrain feature #${i+1}`));
     jsonData.objects?.forEach((o: any, i: number) => checkMaterialRef(o.materialRef, `Scatter object #${i+1} ('${o.type}')`));
@@ -462,13 +485,27 @@ function validateGeneratedJSON(jsonData: any): { valid: boolean; errors: string[
     
     jsonData.objectsToCreate?.forEach((o: any, i: number) => {
         const vCount = o.meshData?.vertices?.length || 0;
-        if (vCount === 0 && o.meshData?.faces?.length > 0) { errors.push(`Created object #${i+1} ('${o.name}') has faces but no vertices.`); }
+        if (vCount === 0 && o.meshData?.faces?.length > 0) {
+            errors.push(`Created object #${i+1} ('${o.name}') has faces but no vertices.`);
+        }
         
-        o.meshData?.faces?.forEach((face: number[], faceIdx: number) => face.forEach(idx => { if (idx < 0 || idx >= vCount) { errors.push(`Created object #${i+1} ('${o.name}'), face #${faceIdx+1} has invalid vertex index ${idx} (v count: ${vCount})`); } }));
+        o.meshData?.faces?.forEach((face: number[], faceIdx: number) => {
+            if (!Array.isArray(face) || face.length < 3) {
+                errors.push(`Created object #${i+1} ('${o.name}'), face #${faceIdx+1} must be an array of at least 3 vertices.`);
+            }
+            face.forEach(idx => {
+                if (typeof idx !== 'number' || idx < 0 || idx >= vCount) {
+                    errors.push(`Created object #${i+1} ('${o.name}'), face #${faceIdx+1} has invalid vertex index ${idx} (vertex count: ${vCount})`);
+                }
+            });
+        });
 
+        if (o.meshData?.uvs && o.meshData.uvs.length !== vCount) {
+            errors.push(`Created object #${i+1} ('${o.name}') has mismatched UV and vertex counts. UVs: ${o.meshData.uvs.length}, Vertices: ${vCount}.`);
+        }
         o.meshData?.uvs?.forEach((uv: number[], uvIdx: number) => {
-            if (uv.length !== 2 || uv[0] < 0 || uv[0] > 1 || uv[1] < 0 || uv[1] > 1) {
-                errors.push(`Created object #${i+1} ('${o.name}'), UV #${uvIdx+1} is invalid. Must be [u,v] between 0 and 1. Got: [${uv.join(', ')}]`);
+            if (!Array.isArray(uv) || uv.length !== 2 || uv.some(c => typeof c !== 'number' || c < 0 || c > 1)) {
+                errors.push(`Created object #${i+1} ('${o.name}'), UV #${uvIdx+1} is invalid. Must be [u,v] with numbers between 0 and 1. Got: [${uv.join(', ')}]`);
             }
         });
     });
@@ -481,28 +518,21 @@ function validateGeneratedJSON(jsonData: any): { valid: boolean; errors: string[
             }
         });
     });
+
+    if (jsonData.colorPalette && (!Array.isArray(jsonData.colorPalette) || jsonData.colorPalette.length !== 5)) {
+        errors.push(`The main colorPalette must be an array of 5 hex color strings.`);
+    }
     
     return { valid: errors.length === 0, errors };
 }
 
-interface GenerationParams {
-    prompt: string;
-    image: { base64: string; mimeType: string } | null;
-    terrainFeatures: TerrainFeature[];
-    scatterObjects: ScatterObject[];
-    lightingConfig: LightingConfig;
-    postProcessingConfig: PostProcessingConfig;
-    cameraConfig: CameraConfig;
-    weatherConfig: WeatherConfig;
-    bakingConfig: BakingConfig;
-    vegetationConfig: VegetationConfig;
-}
+import { constructPrompt } from './prompt-constructor';
+import type { GenerationParams } from './types';
 
 export async function generateBlenderData(params: GenerationParams): Promise<string> {
-    const { prompt, image, terrainFeatures, scatterObjects, lightingConfig, postProcessingConfig, cameraConfig, weatherConfig, bakingConfig, vegetationConfig } = params;
-    
+    const { image } = params;
     const model = 'gemini-2.5-flash';
-    
+
     let systemPrompt = `You are an expert-level procedural content director for a Blender add-on. Your job is to take a user's high-level description and convert it into a detailed, structured JSON "recipe" that a Blender script can use to generate the 3D content. The JSON output MUST strictly conform to the provided schema.
 
 Key responsibilities:
@@ -514,50 +544,23 @@ Key responsibilities:
 - Scene Structure: Organize objects into logical collections in 'sceneHierarchy'. Use 'name' from 'objectsToCreate' or 'variant' from 'objects' as identifiers. Provide a sensible default camera.
 - Procedural Materials: For complex materials, you can define a 'nodeTree' to describe a procedural shader graph.
 - Ecological Systems: For natural scenes, define biomes, seasonal variations, and general foliage properties in 'vegetationSystem'.`;
-    
+
     const finalSchema = JSON.parse(JSON.stringify(baseSceneSpecSchema));
 
     if (image) {
         systemPrompt += `\n\nYour primary task is to analyze the reference image and prompt to generate a detailed 3D object in 'objectsToCreate'. Infer 'approximateScale', 'colorPalette', 'materialType'. Create a new PBR material for it in the 'materials' array and reference it by name in 'materialRef'. Then, generate the 'meshData' including a text description. If the prompt describes a broader scene, integrate the created object naturally.`;
         (finalSchema.properties as any).objectsToCreate = { type: Type.ARRAY, description: "3D objects generated from image references.", items: createdObjectSchema };
     } else {
-         systemPrompt += `\n\nBe creative and fill in details based on the prompt. For a "forest", create materials for ground/trees, define tree scatter objects, and set up a forest environment. For a "desert", create sand materials and dune-like terrain.`;
+        systemPrompt += `\n\nBe creative and fill in details based on the prompt. For a "forest", create materials for ground/trees, define tree scatter objects, and set up a forest environment. For a "desert", create sand materials and dune-like terrain.`;
     }
 
     try {
         const contentParts = [];
         if (image) {
-            contentParts.push({inlineData: {data: image.base64, mimeType: image.mimeType}});
+            contentParts.push({ inlineData: { data: image.base64, mimeType: image.mimeType } });
         }
-
-        const promptParts = [];
-        promptParts.push(`User prompt: "${prompt}"`);
-        
-        promptParts.push(`LIGHTING: Use preset '${lightingConfig.preset}' as a guide. Set exact values: Ambient Intensity: ${lightingConfig.ambientIntensity}, Ambient Color: "${lightingConfig.ambientColor}", Main Light Type: "${lightingConfig.lightType}".`);
-        promptParts.push(`CAMERA: Use preset '${cameraConfig.preset}' to guide position. Set exact settings: Lens: ${cameraConfig.lens}mm, Clip Start: ${cameraConfig.clipStart}m, Clip End: ${cameraConfig.clipEnd}m.`);
-        if (weatherConfig.type !== 'none') promptParts.push(`WEATHER: You MUST populate 'weatherSystem' with: Type: '${weatherConfig.type}', Intensity: ${weatherConfig.intensity}, Wind Strength: ${weatherConfig.windStrength}, Wind Direction: [${weatherConfig.windDirection.join(', ')}].`);
-        if (bakingConfig.enabled) promptParts.push(`TEXTURE BAKING: You MUST populate 'textureBaking': Enabled: true, Resolution: ${bakingConfig.resolution}, Maps: [${bakingConfig.maps.map(m => `'${m}'`).join(', ')}], Sample Count: ${bakingConfig.sampleCount}.`);
-
-        if (terrainFeatures.length > 0) promptParts.push(`TERRAIN FEATURES: Create materials and features for: ${terrainFeatures.map(f => `'${f.type}' with material '${f.material}'`).join(', ')}.`);
-        if (scatterObjects.length > 0) promptParts.push(`SCATTER OBJECTS: Create materials and objects for: ${scatterObjects.map(o => `'${o.type}' with density ${o.density.toFixed(2)}`).join(', ')}.`);
-        
-        const { biomes, activeSeason, seasonalVariations, foliageProperties } = vegetationConfig;
-        if (biomes.length > 0 || activeSeason !== 'none') {
-             let vegInstructions = `VEGETATION SYSTEM: Populate 'vegetationSystem'.\n`;
-             if (activeSeason !== 'none') {
-                const seasonSettings = seasonalVariations[activeSeason as keyof SeasonalVariations];
-                vegInstructions += `- Active season is '${activeSeason}'. Use settings: Foliage Color: '${seasonSettings.foliageColor}', Leaf Density: ${seasonSettings.leafDensity.toFixed(2)}.\n`;
-            }
-             vegInstructions += `- General foliage properties: baseDensity: ${foliageProperties.baseDensity.toFixed(2)}, health: ${foliageProperties.health.toFixed(2)}, colorVariation: ${foliageProperties.colorVariation.toFixed(2)}.\n`;
-             if (biomes.length > 0) vegInstructions += `- Define biomes: ${biomes.map(b => `'${b.name}'`).join(', ')}.\n`;
-             promptParts.push(vegInstructions);
-        }
-
-        promptParts.push(`POST-PROCESSING: Use these exact 'postProcessing' settings: ${JSON.stringify(postProcessingConfig)}`);
-        promptParts.push(`QUALITY GUIDELINES: Generate meshes with clean topology. Set schemaVersion to '1.3'.`);
-
-        const fullPrompt = promptParts.join('\n\n');
-        contentParts.push({text: fullPrompt});
+        const fullPrompt = constructPrompt(params);
+        contentParts.push({ text: fullPrompt });
 
         const response = await ai.models.generateContent({
             model: model,
@@ -568,7 +571,7 @@ Key responsibilities:
                 responseSchema: finalSchema,
             },
         });
-        
+
         const jsonString = response.text;
         try {
             const parsedJson = JSON.parse(jsonString);
@@ -580,16 +583,18 @@ Key responsibilities:
         } catch (jsonError) {
             console.error("Gemini returned invalid JSON or failed validation:", jsonString, jsonError);
             if (jsonError instanceof Error) {
-                 throw new Error(`The AI returned a response that was not valid or logical JSON. Please try regenerating. Details: ${jsonError.message}`);
+                throw new Error(`The AI returned a response that was not valid or logical JSON. Please try regenerating. Details: ${jsonError.message}`);
             }
             throw new Error("The AI returned a response that was not valid or logical JSON. Please try regenerating.");
         }
-
     } catch (error) {
         console.error("Error calling Gemini API:", error);
         if (error instanceof Error) {
-            throw new Error(`Gemini API Error: ${error.message}`);
+            if (error.message.includes('API key not valid')) {
+                throw new Error(`Invalid API Key. Please check your configuration.`);
+            }
+            throw new Error(`Failed to generate scene specification. Gemini API Error: ${error.message}`);
         }
-        throw new Error("An unexpected error occurred while communicating with the Gemini API.");
+        throw new Error("An unexpected error occurred while communicating with the Gemini API. Please check the console for details.");
     }
 }
