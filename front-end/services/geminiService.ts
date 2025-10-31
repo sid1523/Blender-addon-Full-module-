@@ -2,7 +2,12 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import type { TerrainFeature, ScatterObject, Biome, FoliageProperties, SeasonalVariations, LightingConfig, CameraConfig, WeatherConfig, BakingConfig, PostProcessingConfig, VegetationConfig } from "../App";
 
-// TODO: API key is exposed here. This should be handled by a backend proxy.
+// ⚠️ CRITICAL SECURITY ISSUE: API key is exposed in client-side code!
+// RECOMMENDATION: Move API calls to a backend proxy server (Node.js/Express) to hide credentials.
+// For production use, implement:
+// 1. Backend API endpoint (e.g., POST /api/generate-scene) that stores the Gemini API key securely
+// 2. Update this service to call your backend instead of Gemini directly
+// 3. Add authentication/rate limiting to prevent abuse
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
 export async function enhancePrompt(originalPrompt: string): Promise<string> {
@@ -80,449 +85,393 @@ export async function generateColorPalette(prompt: string): Promise<string[]> {
     }
 }
 
-const nodeTreeSchema = {
-    type: Type.OBJECT,
-    description: "A simplified representation of a procedural shader node graph.",
-    properties: {
-        nodes: {
-            type: Type.ARRAY,
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    id: { type: Type.STRING, description: "Unique identifier for this node, e.g., 'noise_tex_1'." },
-                    type: { type: Type.STRING, description: "The type of Blender shader node, e.g., 'ShaderNodeTexNoise', 'ShaderNodeMath'." },
-                    params: { type: Type.OBJECT, description: "A map of parameter names to values, e.g., {'scale': 5, 'detail': 16}." }
-                }
-            }
-        },
-        links: {
-            type: Type.ARRAY,
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    from_node: { type: Type.STRING, description: "The 'id' of the source node." },
-                    from_socket: { type: Type.STRING, description: "The name of the output socket, e.g., 'Fac', 'Color'." },
-                    to_node: { type: Type.STRING, description: "The 'id' of the destination node." },
-                    to_socket: { type: Type.STRING, description: "The name of the input socket, e.g., 'Base Color', 'Scale'." }
-                }
-            }
-        }
-    }
-};
-
-const pbrMaterialSchema = {
-    type: Type.OBJECT,
-    properties: {
-        name: { type: Type.STRING, description: "Unique name for this material, e.g., 'grassy_ground_mat'." },
-        baseColor: { type: Type.STRING, pattern: "^#[0-9a-fA-F]{6}$", description: "Hex code for the material's albedo/diffuse color." },
-        roughness: { type: Type.NUMBER, description: "Material roughness. Range 0.0 (smooth) to 1.0 (rough)." },
-        metallic: { type: Type.NUMBER, description: "Material metallicness. Range 0.0 (dielectric) to 1.0 (full metallic)." },
-        specular: { type: Type.NUMBER, description: "Material specular highlight intensity. Range 0.0 to 1.0." },
-        normalMap: { type: Type.STRING, description: "Description of a procedural node setup for normal/bump mapping, e.g., 'noise_texture_strength_0.5_scale_50'." },
-        emissive: { type: Type.NUMBER, description: "Emission strength. A value greater than 0 makes the material glow. Range: 0 to infinity." },
-        transmission: { type: Type.NUMBER, description: "Transparency factor. 1.0 is fully transparent (like glass). Range 0.0 to 1.0." },
-        ior: { type: Type.NUMBER, description: "Index of Refraction for transmissive materials (e.g., 1.45 for glass, 1.33 for water)." },
-        nodeTree: nodeTreeSchema,
-        displacement: {
-            type: Type.OBJECT,
-            properties: {
-                strength: { type: Type.NUMBER },
-                midLevel: { type: Type.NUMBER, default: 0.5, description: "The value that will be mapped to no displacement." }
-            }
-        }
-    },
-    required: ["name", "baseColor", "roughness", "metallic"]
-};
-
-const physicsSchema = {
-    type: Type.OBJECT,
-    properties: {
-        collisionType: { 
-            type: Type.STRING, 
-            enum: ['mesh', 'convex_hull', 'box', 'sphere', 'none'] 
-        },
-        mass: { type: Type.NUMBER, description: "Mass of the object in kilograms." },
-        friction: { type: Type.NUMBER },
-        restitution: { type: Type.NUMBER, description: "Bounciness of the object." },
-        isDynamic: { type: Type.BOOLEAN, description: "Whether the object should react to physics forces." }
-    }
-};
-
-const createdObjectSchema = {
+// Canvas3D v1.0.0 Schema - Matches Python backend spec_validation.py
+const canvas3dMaterialSchema = {
     type: Type.OBJECT,
     properties: {
         name: {
             type: Type.STRING,
-            description: "A descriptive name for the generated object, e.g., 'Low-Poly Sword', 'Character Maquette'."
+            description: "Unique ASCII-safe material name (a-zA-Z0-9_-), e.g., 'stone_wall', 'torch_flame'."
         },
-        prompt: {
-            type: Type.STRING,
-            description: "The user prompt that was used to generate this specific object."
-        },
-        meshData: {
+        pbr: {
             type: Type.OBJECT,
-            description: "The raw geometry data for the 3D model.",
+            description: "PBR material properties for Cycles/EEVEE rendering.",
             properties: {
-                vertices: {
+                base_color: {
                     type: Type.ARRAY,
-                    description: "An array of vertex coordinates. Each vertex is an array of 3 numbers [x, y, z].",
-                    items: { type: Type.ARRAY, items: { type: Type.NUMBER } }
+                    description: "Base color as RGB [r, g, b] with values 0.0-1.0.",
+                    items: { type: Type.NUMBER, minimum: 0.0, maximum: 1.0 }
                 },
-                edges: {
-                    type: Type.ARRAY,
-                    description: "Optional. Array of edge indices [v1, v2]. Useful for complex meshes to ensure correct topology and subdivision.",
-                    items: { type: Type.ARRAY, items: { type: Type.INTEGER } }
-                },
-                faces: {
-                    type: Type.ARRAY,
-                    description: "An array of faces, defining how vertices connect. Each face is an array of vertex indices [v1, v2, v3, ...]. Faces must reference valid vertex indices (0 to len(vertices)-1).",
-                    items: { type: Type.ARRAY, items: { type: Type.INTEGER } }
-                },
-                uvs: {
-                    type: Type.ARRAY,
-                    description: "Optional. UV map coordinates as an array of [u, v] pairs, corresponding to each vertex. Essential for applying textures.",
-                    items: { type: Type.ARRAY, items: { type: Type.NUMBER } }
-                },
-                normals: {
-                    type: Type.ARRAY,
-                    description: "Optional. Per-vertex normal vectors [nx, ny, nz] for custom shading and smoothing.",
-                    items: { type: Type.ARRAY, items: { type: Type.NUMBER } }
-                },
-                topologyHints: {
-                    type: Type.OBJECT,
-                    description: "Optional hints for the backend renderer about the mesh's structure.",
-                    properties: {
-                        isManifold: { type: Type.BOOLEAN, description: "True if the mesh is watertight with no holes, which is ideal for 3D printing and simulations." },
-                        windingOrder: { type: Type.STRING, enum: ['CW', 'CCW'], description: "The winding order of face vertices, which determines the direction of face normals. 'CCW' (Counter-Clockwise) is standard." },
-                        subdivisionLevels: { type: Type.INTEGER, description: "Suggested levels of Catmull-Clark subdivision surface modifier to apply for a smoother result (0-3)." }
-                    }
-                },
-                description: {
-                    type: Type.STRING,
-                    description: "A detailed text description of the generated mesh, summarizing its inferred style (e.g., 'low-poly', 'realistic', 'stylized'), complexity, and main features."
-                }
-            },
-            required: ["vertices", "faces", "description"]
-        },
-        materialRef: {
-            type: Type.STRING,
-            description: "The name of the material from the top-level 'materials' array to assign to this object."
-        },
-        approximateScale: {
-            type: Type.STRING,
-            description: "The approximate perceived scale of the object relative to a human or typical scene elements, eg., 'small', 'medium', 'large', 'life-size', 'massive'.",
-        },
-        colorPalette: {
-            type: Type.ARRAY,
-            description: "An array of dominant hex color codes inferred from the image for this object, e.g., ['#FF5733', '#C70039']. This can be used to generate the baseColor for its material.",
-            items: { type: Type.STRING, pattern: "^#[0-9a-fA-F]{6}$" }
-        },
-        materialType: {
-            type: Type.STRING,
-            description: "The primary inferred material type for the object, e.g., 'metallic', 'wood', 'stone', 'fabric', 'plastic', 'glass', 'organic'.",
-        },
-        animationRig: {
-            type: Type.OBJECT,
-            properties: {
-                rigType: { type: Type.STRING, enum: ['humanoid', 'quadruped', 'none'] },
-                boneNames: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Suggested bone names for the armature." },
-                ikChains: {
-                    type: Type.ARRAY,
-                    description: "Inverse Kinematics chain definitions.",
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            name: { type: Type.STRING, description: "e.g., 'left_arm_ik'" },
-                            bones: { type: Type.ARRAY, items: { type: Type.STRING }, description: "List of bone names in the chain from root to tip." }
-                        }
-                    }
-                }
+                metallic: { type: Type.NUMBER, minimum: 0.0, maximum: 1.0, description: "Metallic factor 0.0-1.0." },
+                roughness: { type: Type.NUMBER, minimum: 0.0, maximum: 1.0, description: "Roughness factor 0.0-1.0." },
+                normal_tex: { type: Type.STRING, description: "Optional normal map texture path or identifier." }
             }
-        },
-        physics: physicsSchema
+        }
     },
-    required: ["name", "prompt", "meshData", "materialRef", "approximateScale", "colorPalette", "materialType"]
+    required: ["name"]
 };
 
+const canvas3dObjectSchema = {
+    type: Type.OBJECT,
+    properties: {
+        id: {
+            type: Type.STRING,
+            description: "Unique ASCII-safe object ID (a-zA-Z0-9_-), e.g., 'room_1', 'corridor_2', 'door_3'."
+        },
+        type: {
+            type: Type.STRING,
+            enum: ['cube', 'plane', 'cylinder', 'corridor_segment', 'room', 'door', 'stair', 'prop_instance'],
+            description: "Object type: room (dungeon room), corridor_segment (hallway), door (opening), prop_instance (chest/torch/etc)."
+        },
+        position: {
+            type: Type.ARRAY,
+            description: "World position [x, y, z] in meters.",
+            items: { type: Type.NUMBER }
+        },
+        rotation_euler: {
+            type: Type.ARRAY,
+            description: "Rotation as Euler angles [rx, ry, rz] in radians.",
+            items: { type: Type.NUMBER }
+        },
+        scale: {
+            type: Type.ARRAY,
+            description: "Scale factors [sx, sy, sz].",
+            items: { type: Type.NUMBER }
+        },
+        grid_cell: {
+            type: Type.OBJECT,
+            description: "Grid cell coordinates for procedural_dungeon domain.",
+            properties: {
+                col: { type: Type.INTEGER, description: "Column index in grid." },
+                row: { type: Type.INTEGER, description: "Row index in grid." }
+            }
+        },
+        material: {
+            type: Type.STRING,
+            description: "Reference to material name from top-level 'materials' array."
+        },
+        collection: {
+            type: Type.STRING,
+            description: "Optional collection name this object belongs to."
+        },
+        properties: {
+            type: Type.OBJECT,
+            description: "Type-specific properties (e.g., width_cells, height_cells for rooms; direction, length_cells for corridors).",
+            properties: {
+                width_cells: { type: Type.INTEGER, description: "Room width in grid cells (procedural_dungeon)." },
+                height_cells: { type: Type.INTEGER, description: "Room height in grid cells (procedural_dungeon)." },
+                length_cells: { type: Type.INTEGER, description: "Corridor length in grid cells." },
+                direction: {
+                    type: Type.STRING,
+                    enum: ['north', 'south', 'east', 'west'],
+                    description: "Corridor direction."
+                },
+                blocked: { type: Type.BOOLEAN, description: "Whether this cell blocks traversal (for A* pathfinding)." }
+            }
+        }
+    },
+    required: ["id", "type"]
+};
+
+const canvas3dLightSchema = {
+    type: Type.OBJECT,
+    properties: {
+        type: {
+            type: Type.STRING,
+            enum: ['sun', 'point', 'area', 'spot'],
+            description: "Blender light type."
+        },
+        position: {
+            type: Type.ARRAY,
+            description: "Light position [x, y, z] in meters.",
+            items: { type: Type.NUMBER }
+        },
+        rotation_euler: {
+            type: Type.ARRAY,
+            description: "Light rotation [rx, ry, rz] in radians.",
+            items: { type: Type.NUMBER }
+        },
+        intensity: {
+            type: Type.NUMBER,
+            minimum: 0.0,
+            maximum: 10000.0,
+            description: "Light intensity (0-10000)."
+        },
+        color_rgb: {
+            type: Type.ARRAY,
+            description: "Light color as RGB [r, g, b] with values 0.0-1.0. Default [1.0, 1.0, 1.0] (white).",
+            items: { type: Type.NUMBER, minimum: 0.0, maximum: 1.0 }
+        }
+    },
+    required: ["type", "position", "intensity"]
+};
+
+const canvas3dCameraSchema = {
+    type: Type.OBJECT,
+    properties: {
+        position: {
+            type: Type.ARRAY,
+            description: "Camera position [x, y, z] in meters.",
+            items: { type: Type.NUMBER }
+        },
+        rotation_euler: {
+            type: Type.ARRAY,
+            description: "Camera rotation [rx, ry, rz] in radians.",
+            items: { type: Type.NUMBER }
+        },
+        fov_deg: {
+            type: Type.NUMBER,
+            minimum: 20.0,
+            maximum: 120.0,
+            description: "Field of view in degrees (20-120). Default 60."
+        }
+    },
+    required: ["position", "rotation_euler"]
+};
+
+const canvas3dCollectionSchema = {
+    type: Type.OBJECT,
+    properties: {
+        name: {
+            type: Type.STRING,
+            description: "ASCII-safe collection name."
+        },
+        purpose: {
+            type: Type.STRING,
+            enum: ['geometry', 'props', 'lighting', 'physics'],
+            description: "Collection purpose/category."
+        }
+    },
+    required: ["name"]
+};
+
+// Canvas3D v1.0.0 Scene Spec Schema - EXACTLY matches Python backend validation
 const baseSceneSpecSchema = {
     type: Type.OBJECT,
     properties: {
-        schemaVersion: { type: Type.STRING, description: "The version of the schema, e.g., '1.3'." },
-        sceneDescription: { type: Type.STRING, description: "A brief, evocative description of the generated scene, suitable for a loading screen or title." },
-        colorPalette: { type: Type.ARRAY, description: "A harmonious 5-color palette based on the prompt.", items: { type: Type.STRING, pattern: "^#[0-9a-fA-F]{6}$" } },
-        qualityMetrics: {
-            type: Type.OBJECT,
-            properties: {
-                estimatedPolyCount: { type: Type.INTEGER },
-                textureResolution: { type: Type.INTEGER, description: "Recommended texture resolution, e.g., 2048 for 2K." },
-                renderComplexity: { type: Type.STRING, enum: ['low', 'medium', 'high', 'ultra'] },
-                estimatedRenderTime: { type: Type.NUMBER, description: "Estimated render time in seconds for a sample frame." }
-            }
+        version: {
+            type: Type.STRING,
+            description: "Schema version in format N.N.N (e.g., '1.0.0'). REQUIRED."
         },
-        environment: {
-            type: Type.OBJECT,
-            properties: {
-                skyType: { type: Type.STRING, description: "Type of sky. Examples: 'clear_day', 'sunset', 'starry_night', 'overcast'." },
-                sunStrength: { type: Type.NUMBER, description: "The intensity of the main light source (sun). Range: 0.1 to 10." },
-                ambientLightIntensity: { type: Type.NUMBER, description: "Intensity of the global ambient light, from 0.0 (dark) to 1.0 (full)." },
-                ambientLightColor: { type: Type.STRING, description: "The hex color code for the ambient light, e.g., '#406080' for a bluish skylight." },
-                mainLightType: { type: Type.STRING, description: "The type of the primary light source. Can be 'directional' (like a sun), 'point' (like a lamp), or 'spot'." }
-            },
+        domain: {
+            type: Type.STRING,
+            enum: ['procedural_dungeon', 'film_interior'],
+            description: "Scene domain. Use 'procedural_dungeon' for dungeon generation with grid-based layout."
         },
-        materials: { type: Type.ARRAY, description: "A library of reusable PBR materials for objects and terrain features in the scene.", items: pbrMaterialSchema },
-        terrain: {
+        units: {
+            type: Type.STRING,
+            enum: ['meters'],
+            description: "Measurement units. Always 'meters'."
+        },
+        seed: {
+            type: Type.INTEGER,
+            minimum: 0,
+            description: "Random seed for deterministic generation (>= 0). REQUIRED."
+        },
+        metadata: {
             type: Type.OBJECT,
+            description: "Optional metadata for scene configuration.",
             properties: {
-                baseMaterialRef: { type: Type.STRING, description: "Reference to the name of the primary material for the terrain from the top-level 'materials' array." },
-                elevationScale: { type: Type.NUMBER, description: "The overall height variation of the terrain. 0 is flat, higher numbers mean more mountainous." },
-                heightmap: {
-                    type: Type.OBJECT,
-                    properties: {
-                        resolution: { type: Type.INTEGER, description: "Grid resolution, e.g., 128 for a 128x128 heightmap." },
-                        data: { type: Type.ARRAY, description: "Flattened array of height values (0.0-1.0). Length must be resolution*resolution.", items: { type: Type.NUMBER } },
-                        noiseSettings: {
-                            type: Type.OBJECT,
-                            description: "Parameters for procedurally generating the heightmap if data is not provided.",
-                            properties: { octaves: { type: Type.INTEGER }, persistence: { type: Type.NUMBER }, lacunarity: { type: Type.NUMBER }, seed: { type: Type.INTEGER } }
-                        }
-                    }
+                quality_mode: {
+                    type: Type.STRING,
+                    enum: ['lite', 'balanced', 'high'],
+                    description: "Quality mode for rendering/geometry complexity."
                 },
-                features: {
-                    type: Type.ARRAY,
-                    description: "Specific terrain features to add.",
-                    items: { type: Type.OBJECT, properties: { type: { type: Type.STRING, description: "Type of feature, e.g., 'river', 'lake', 'winding_path'." }, materialRef: { type: Type.STRING, description: "Reference to the name of the material for this feature from the top-level 'materials' array." } }, required: ["type", "materialRef"] }
-                }
+                hardware_profile: { type: Type.STRING, description: "Optional hardware profile hint." },
+                notes: { type: Type.STRING, description: "Optional notes about this scene." }
             }
+        },
+        grid: {
+            type: Type.OBJECT,
+            description: "Grid configuration for procedural_dungeon domain. REQUIRED for procedural_dungeon.",
+            properties: {
+                cell_size_m: {
+                    type: Type.NUMBER,
+                    minimum: 0.25,
+                    maximum: 5.0,
+                    description: "Size of each grid cell in meters (0.25-5.0)."
+                },
+                dimensions: {
+                    type: Type.OBJECT,
+                    description: "Grid dimensions.",
+                    properties: {
+                        cols: { type: Type.INTEGER, minimum: 5, maximum: 200, description: "Number of columns (5-200)." },
+                        rows: { type: Type.INTEGER, minimum: 5, maximum: 200, description: "Number of rows (5-200)." }
+                    },
+                    required: ["cols", "rows"]
+                }
+            },
+            required: ["cell_size_m", "dimensions"]
         },
         objects: {
             type: Type.ARRAY,
-            description: "A list of standard objects to be scattered across the terrain.",
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    type: { type: Type.STRING, description: "The type of object, e.g., 'tree', 'rock', 'bush', 'flower_patch'." },
-                    variant: { type: Type.STRING, description: "A specific variant of the object, e.g., 'pine_tree', 'oak_tree', 'large_boulder'." },
-                    density: { type: Type.NUMBER, description: "How densely the objects are packed. Range 0.0 to 1.0." },
-                    scale_variation: { type: Type.NUMBER, description: "The amount of random variation in the scale of each object. Range 0.0 to 1.0." },
-                    min_distance: { type: Type.NUMBER, description: "The minimum distance between instances of this object, preventing clustering. In abstract Blender units. Omit if not specified." },
-                    min_distance_from_feature: { type: Type.NUMBER, description: "The minimum distance this object type should be placed from any defined terrain feature (e.g., river, path). In abstract Blender units. Omit if not specified." },
-                    materialRef: { type: Type.STRING, description: "Reference to the name of the material for this object from the top-level 'materials' array." },
-                    useParticleSystem: { type: Type.BOOLEAN, description: "Set to true if density is high (>0.7) to suggest the backend use a particle system for efficiency." },
-                    physics: physicsSchema,
-                    lodVariants: { type: Type.ARRAY, description: "Level of Detail variants for this object, used for performance optimization.", items: { type: Type.OBJECT, properties: { level: { type: Type.STRING, enum: ['high', 'medium', 'low'] }, vertexCount: { type: Type.INTEGER }, materialRef: { type: Type.STRING, description: "Material for this LOD level, could be simpler than the main one." } } } },
-                    animations: {
-                        type: Type.ARRAY,
-                        description: "Keyframe animations specific to this object variant, e.g., for wind sway on trees.",
-                        items: {
-                            type: Type.OBJECT,
-                            properties: {
-                                type: { type: Type.STRING, enum: ['rotation', 'position', 'scale'] },
-                                keyframes: {
-                                    type: Type.ARRAY,
-                                    items: { type: Type.OBJECT, properties: { frame: { type: Type.INTEGER }, value: { type: Type.ARRAY, items: { type: Type.NUMBER } }, interpolation: { type: Type.STRING, enum: ['LINEAR', 'BEZIER', 'CONSTANT'] } } }
-                                },
-                                looping: { type: Type.BOOLEAN }
-                            }
-                        }
-                    },
-                },
-                required: ["type", "variant", "density", "scale_variation", "materialRef"],
-            }
+            description: "Array of scene objects (rooms, corridors, doors, props). REQUIRED.",
+            items: canvas3dObjectSchema
         },
-        vegetationSystem: {
+        lighting: {
+            type: Type.ARRAY,
+            description: "Array of lights in the scene. At least 1 light required. REQUIRED.",
+            items: canvas3dLightSchema
+        },
+        camera: {
+            ...canvas3dCameraSchema,
+            description: "Camera configuration. REQUIRED."
+        },
+        materials: {
+            type: Type.ARRAY,
+            description: "Optional array of PBR materials.",
+            items: canvas3dMaterialSchema
+        },
+        collections: {
+            type: Type.ARRAY,
+            description: "Optional array of Blender collections for organizing objects.",
+            items: canvas3dCollectionSchema
+        },
+        constraints: {
             type: Type.OBJECT,
+            description: "Optional scene constraints for validation.",
             properties: {
-                biomes: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            name: { type: Type.STRING },
-                            coverage: { type: Type.NUMBER, description: "Percentage of terrain this biome covers." },
-                            moistureRange: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "[min, max] moisture range." },
-                            elevationRange: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "[min, max] elevation range." },
-                            dominantSpecies: {
-                                type: Type.ARRAY,
-                                items: {
-                                    type: Type.OBJECT,
-                                    properties: {
-                                        name: { type: Type.STRING, description: "Name of the object variant, which MUST correspond to a 'variant' in the top-level 'objects' array." },
-                                        density: { type: Type.NUMBER, description: "Density of this species within the biome (0.0 to 1.0)." }
-                                    },
-                                    required: ['name', 'density']
-                                },
-                                description: "List of dominant species with their respective densities within this biome."
-                            }
-                        }
-                    }
+                min_path_length_cells: {
+                    type: Type.INTEGER,
+                    minimum: 5,
+                    description: "Minimum path length in grid cells for dungeon traversability (>= 5)."
                 },
-                seasonalVariation: { type: Type.OBJECT, properties: { season: { type: Type.STRING, enum: ['spring', 'summer', 'autumn', 'winter'] }, foliageColor: { type: Type.STRING, pattern: "^#[0-9a-fA-F]{6}$" }, leafDensity: { type: Type.NUMBER, description: "Multiplier for leaf density, from 0.0 (bare) to 1.0 (full)." } } },
-                foliageProperties: {
-                     type: Type.OBJECT,
-                     description: "General properties for foliage across the scene, can be overridden by biome or season.",
-                     properties: {
-                         baseDensity: { type: Type.NUMBER, description: "Overall foliage density multiplier (0.0 to 1.0)." },
-                         health: { type: Type.NUMBER, description: "Overall health of vegetation, affecting color saturation and fullness (0.0 dead to 1.0 vibrant)." },
-                         colorVariation: { type: Type.NUMBER, description: "Amount of random color variation between individual plants (0.0 uniform to 1.0 high variation)." }
-                     }
+                require_traversable_start_to_goal: {
+                    type: Type.BOOLEAN,
+                    description: "Whether to enforce A* pathfinding from start (0,0) to goal (cols-1,rows-1)."
+                },
+                max_polycount: {
+                    type: Type.INTEGER,
+                    minimum: 1000,
+                    description: "Maximum polygon count for performance budgeting (>= 1000)."
                 }
             }
-        },
-        sceneHierarchy: {
-            type: Type.OBJECT,
-            description: "Defines the scene's structure, including object collections, camera, and world settings.",
-            properties: {
-                collections: { type: Type.ARRAY, description: "Logical groupings of objects, similar to folders or layers.", items: { type: Type.OBJECT, properties: { name: { type: Type.STRING, description: "Name of the collection, e.g., 'Characters', 'EnvironmentProps'." }, objects: { type: Type.ARRAY, items: { type: Type.STRING }, description: "A list of object names (from 'objectsToCreate' or inferred scatter objects) belonging to this collection." } } } },
-                camera: {
-                    type: Type.OBJECT,
-                    description: "Initial setup for the scene camera.",
-                    properties: {
-                        position: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "Camera position as [x, y, z]." },
-                        rotation: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "Camera rotation as Euler angles [rx, ry, rz] in radians." },
-                        lens: { type: Type.NUMBER, description: "Focal length in millimeters (e.g., 50 for standard, 24 for wide-angle)." },
-                        clipStart: { type: Type.NUMBER, description: "Camera near clip distance." },
-                        clipEnd: { type: Type.NUMBER, description: "Camera far clip distance." }
-                    }
-                },
-                world: { type: Type.OBJECT, description: "World and background lighting settings.", properties: { backgroundColor: { type: Type.STRING, pattern: "^#[0-9a-fA-F]{6}$", description: "Background color if not using a procedural sky." }, strength: { type: Type.NUMBER, description: "Strength of the background light." }, proceduralSky: { type: Type.STRING, enum: ['nishita', 'none'], description: "Which procedural sky model to use. 'nishita' is physically-based." } } }
-            }
-        },
-        weatherSystem: {
-            type: Type.OBJECT,
-            properties: {
-                type: { type: Type.STRING, enum: ['none', 'rain', 'snow', 'fog', 'dust', 'leaves'] },
-                intensity: { type: Type.NUMBER, description: "0.0 to 1.0" },
-                windDirection: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "[x, y, z] vector" },
-                windStrength: { type: Type.NUMBER },
-                particleSettings: { type: Type.OBJECT, properties: { count: { type: Type.INTEGER }, size: { type: Type.NUMBER }, lifetime: { type: Type.NUMBER }, color: { type: Type.STRING, pattern: "^#[0-9a-fA-F]{6}$" } } }
-            }
-        },
-        animations: {
-            type: Type.OBJECT,
-            properties: {
-                objectAnimations: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            objectName: { type: Type.STRING, description: "The name of the object to animate ('name' from created objects, 'variant' from scattered objects)." },
-                            type: { type: Type.STRING, enum: ['rotation', 'position', 'scale'] },
-                            keyframes: {
-                                type: Type.ARRAY,
-                                items: { type: Type.OBJECT, properties: { frame: { type: Type.INTEGER }, value: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "e.g., [x, y, z]" }, interpolation: { type: Type.STRING, enum: ['LINEAR', 'BEZIER', 'CONSTANT'] } } }
-                            },
-                            looping: { type: Type.BOOLEAN }
-                        }
-                    }
-                },
-                cameraAnimation: { type: Type.OBJECT, properties: { path: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { frame: { type: Type.INTEGER }, position: { type: Type.ARRAY, items: { type: Type.NUMBER } }, lookAt: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "A point [x,y,z] for the camera to track." } } } } } }
-            }
-        },
-        textureBaking: {
-            type: Type.OBJECT,
-            properties: {
-                enabled: { type: Type.BOOLEAN },
-                resolution: { type: Type.INTEGER, enum: [512, 1024, 2048, 4096] },
-                texturesToBake: { type: Type.ARRAY, items: { type: Type.STRING, enum: ['diffuse', 'normal', 'roughness', 'metallic', 'ambient_occlusion', 'emission'] } },
-                sampleCount: { type: Type.INTEGER, description: "Bake quality, e.g., 128." }
-            }
-        },
-        postProcessing: {
-            type: Type.OBJECT,
-            description: "Configuration for post-processing effects and render settings.",
-            properties: {
-                bloom: { type: Type.OBJECT, properties: { enabled: { type: Type.BOOLEAN }, intensity: { type: Type.NUMBER }, threshold: { type: Type.NUMBER }, knee: { type: Type.NUMBER } }, required: ["enabled", "intensity", "threshold", "knee"] },
-                depthOfField: { type: Type.OBJECT, properties: { enabled: { type: Type.BOOLEAN }, focusDistance: { type: Type.NUMBER }, fStop: { type: Type.NUMBER }, blades: { type: Type.INTEGER } }, required: ["enabled", "focusDistance", "fStop", "blades"] },
-                colorGrading: { type: Type.OBJECT, properties: { preset: { type: Type.STRING }, exposure: { type: Type.NUMBER }, contrast: { type: Type.NUMBER }, saturation: { type: Type.NUMBER } }, required: ["preset", "exposure", "contrast", "saturation"] },
-                renderSettings: { type: Type.OBJECT, description: "Settings for the final render output.", properties: { engine: { type: Type.STRING, enum: ['CYCLES', 'EEVEE'], default: 'EEVEE' }, resolutionX: { type: Type.INTEGER, default: 1920 }, resolutionY: { type: Type.INTEGER, default: 1080 }, samples: { type: Type.INTEGER, description: "e.g., 128 for EEVEE, 1024 for Cycles." }, useDenoising: { type: Type.BOOLEAN } } }
-            },
-            required: ["bloom", "depthOfField", "colorGrading", "renderSettings"]
         }
     },
-    required: ["schemaVersion", "sceneDescription", "environment", "materials", "terrain", "objects", "postProcessing", "sceneHierarchy"]
+    required: ["version", "domain", "seed", "objects", "lighting", "camera"]
 };
 
+// Validation for Canvas3D v1.0.0 JSON (matches Python backend validation)
 function validateGeneratedJSON(jsonData: any): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
-    const hexColorRegex = /^#[0-9a-fA-F]{6}$/;
 
-    const checkColors = (obj: any, path: string) => {
-        for (const key in obj) {
-            if (obj.hasOwnProperty(key)) {
-                const value = obj[key];
-                const lowerKey = key.toLowerCase();
-                if (typeof value === 'string' && (lowerKey.includes('color') || lowerKey === 'basecolor') && !value.startsWith('var(') ) {
-                    if (!hexColorRegex.test(value)) {
-                        errors.push(`Invalid hex color format at ${path}.${key}: '${value}'`);
-                    }
-                } else if (typeof value === 'object' && value !== null) {
-                    checkColors(value, `${path}.${key}`);
+    // Required top-level fields
+    if (!jsonData.version) {
+        errors.push("Missing required field: 'version'");
+    } else if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(jsonData.version)) {
+        errors.push("Field 'version' must match pattern N.N.N (e.g., '1.0.0')");
+    }
+
+    if (!jsonData.domain) {
+        errors.push("Missing required field: 'domain'");
+    } else if (!['procedural_dungeon', 'film_interior'].includes(jsonData.domain)) {
+        errors.push("Field 'domain' must be 'procedural_dungeon' or 'film_interior'");
+    }
+
+    if (typeof jsonData.seed !== 'number' || jsonData.seed < 0) {
+        errors.push("Field 'seed' must be a non-negative integer");
+    }
+
+    if (!Array.isArray(jsonData.objects)) {
+        errors.push("Missing or invalid required field: 'objects' (must be array)");
+    }
+
+    if (!Array.isArray(jsonData.lighting) || jsonData.lighting.length < 1) {
+        errors.push("Missing or invalid required field: 'lighting' (must be array with at least 1 light)");
+    }
+
+    if (!jsonData.camera || typeof jsonData.camera !== 'object') {
+        errors.push("Missing or invalid required field: 'camera' (must be object)");
+    }
+
+    // Grid required for procedural_dungeon
+    if (jsonData.domain === 'procedural_dungeon') {
+        if (!jsonData.grid) {
+            errors.push("Field 'grid' is required for domain 'procedural_dungeon'");
+        } else {
+            if (typeof jsonData.grid.cell_size_m !== 'number' ||
+                jsonData.grid.cell_size_m < 0.25 || jsonData.grid.cell_size_m > 5.0) {
+                errors.push("Field 'grid.cell_size_m' must be a number between 0.25 and 5.0");
+            }
+            if (!jsonData.grid.dimensions ||
+                typeof jsonData.grid.dimensions.cols !== 'number' ||
+                typeof jsonData.grid.dimensions.rows !== 'number' ||
+                jsonData.grid.dimensions.cols < 5 || jsonData.grid.dimensions.cols > 200 ||
+                jsonData.grid.dimensions.rows < 5 || jsonData.grid.dimensions.rows > 200) {
+                errors.push("Field 'grid.dimensions' must have 'cols' and 'rows' integers between 5 and 200");
+            }
+        }
+    }
+
+    // Validate objects
+    const asciiSafePattern = /^[a-zA-Z0-9_\-]+$/;
+    const objectIds = new Set<string>();
+
+    if (Array.isArray(jsonData.objects)) {
+        jsonData.objects.forEach((obj: any, i: number) => {
+            if (!obj.id || !asciiSafePattern.test(obj.id)) {
+                errors.push(`Object #${i+1}: 'id' must be ASCII-safe (a-zA-Z0-9_-)`);
+            } else if (objectIds.has(obj.id)) {
+                errors.push(`Object #${i+1}: duplicate id '${obj.id}'`);
+            } else {
+                objectIds.add(obj.id);
+            }
+
+            const validTypes = ['cube', 'plane', 'cylinder', 'corridor_segment', 'room', 'door', 'stair', 'prop_instance'];
+            if (!obj.type || !validTypes.includes(obj.type)) {
+                errors.push(`Object #${i+1}: 'type' must be one of ${validTypes.join(', ')}`);
+            }
+
+            // Check corridor direction
+            if (obj.type === 'corridor_segment' && obj.properties?.direction) {
+                const validDirections = ['north', 'south', 'east', 'west'];
+                if (!validDirections.includes(obj.properties.direction)) {
+                    errors.push(`Object #${i+1}: corridor_segment 'direction' must be one of ${validDirections.join(', ')}`);
                 }
             }
-        }
-    };
-    checkColors(jsonData, 'root');
-
-    if (!jsonData.materials || !Array.isArray(jsonData.materials)) {
-        errors.push("Missing or invalid 'materials' array in the generated JSON.");
-        return { valid: false, errors };
-    }
-    
-    const materialNames = new Set(jsonData.materials.map((m: any) => m.name));
-    if (materialNames.size !== jsonData.materials.length) {
-        errors.push("Material names must be unique.");
+        });
     }
 
-    const checkMaterialRef = (ref: string, context: string) => {
-        if (ref && !materialNames.has(ref)) {
-            errors.push(`${context} references undefined material: '${ref}'`);
-        }
-    };
-    
-    jsonData.terrain?.features?.forEach((f: any, i: number) => checkMaterialRef(f.materialRef, `Terrain feature #${i+1}`));
-    jsonData.objects?.forEach((o: any, i: number) => checkMaterialRef(o.materialRef, `Scatter object #${i+1} ('${o.type}')`));
-    jsonData.objectsToCreate?.forEach((o: any, i: number) => checkMaterialRef(o.materialRef, `Created object #${i+1} ('${o.name}')`));
-    
-    jsonData.objectsToCreate?.forEach((o: any, i: number) => {
-        const vCount = o.meshData?.vertices?.length || 0;
-        if (vCount === 0 && o.meshData?.faces?.length > 0) {
-            errors.push(`Created object #${i+1} ('${o.name}') has faces but no vertices.`);
-        }
-        
-        o.meshData?.faces?.forEach((face: number[], faceIdx: number) => {
-            if (!Array.isArray(face) || face.length < 3) {
-                errors.push(`Created object #${i+1} ('${o.name}'), face #${faceIdx+1} must be an array of at least 3 vertices.`);
-            }
-            face.forEach(idx => {
-                if (typeof idx !== 'number' || idx < 0 || idx >= vCount) {
-                    errors.push(`Created object #${i+1} ('${o.name}'), face #${faceIdx+1} has invalid vertex index ${idx} (vertex count: ${vCount})`);
-                }
-            });
-        });
-
-        if (o.meshData?.uvs && o.meshData.uvs.length !== vCount) {
-            errors.push(`Created object #${i+1} ('${o.name}') has mismatched UV and vertex counts. UVs: ${o.meshData.uvs.length}, Vertices: ${vCount}.`);
-        }
-        o.meshData?.uvs?.forEach((uv: number[], uvIdx: number) => {
-            if (!Array.isArray(uv) || uv.length !== 2 || uv.some(c => typeof c !== 'number' || c < 0 || c > 1)) {
-                errors.push(`Created object #${i+1} ('${o.name}'), UV #${uvIdx+1} is invalid. Must be [u,v] with numbers between 0 and 1. Got: [${uv.join(', ')}]`);
+    // Validate materials
+    if (jsonData.materials && Array.isArray(jsonData.materials)) {
+        const materialNames = new Set<string>();
+        jsonData.materials.forEach((mat: any, i: number) => {
+            if (!mat.name || !asciiSafePattern.test(mat.name)) {
+                errors.push(`Material #${i+1}: 'name' must be ASCII-safe (a-zA-Z0-9_-)`);
+            } else if (materialNames.has(mat.name)) {
+                errors.push(`Material #${i+1}: duplicate name '${mat.name}'`);
+            } else {
+                materialNames.add(mat.name);
             }
         });
-    });
-
-    const scatterVariants = new Set(jsonData.objects?.map((o: any) => o.variant) || []);
-    jsonData.vegetationSystem?.biomes?.forEach((b: any, i: number) => {
-        b.dominantSpecies?.forEach((s: any) => {
-            if (!scatterVariants.has(s.name)) {
-                errors.push(`Biome '${b.name}' references dominant species '${s.name}', but no scatter object with that variant exists.`);
-            }
-        });
-    });
-
-    if (jsonData.colorPalette && (!Array.isArray(jsonData.colorPalette) || jsonData.colorPalette.length !== 5)) {
-        errors.push(`The main colorPalette must be an array of 5 hex color strings.`);
     }
-    
+
+    // Validate lights
+    if (Array.isArray(jsonData.lighting)) {
+        jsonData.lighting.forEach((light: any, i: number) => {
+            const validTypes = ['sun', 'point', 'area', 'spot'];
+            if (!light.type || !validTypes.includes(light.type)) {
+                errors.push(`Light #${i+1}: 'type' must be one of ${validTypes.join(', ')}`);
+            }
+            if (!Array.isArray(light.position) || light.position.length !== 3) {
+                errors.push(`Light #${i+1}: 'position' must be [x, y, z] array`);
+            }
+            if (typeof light.intensity !== 'number' || light.intensity < 0 || light.intensity > 10000) {
+                errors.push(`Light #${i+1}: 'intensity' must be number between 0 and 10000`);
+            }
+        });
+    }
+
+    // Validate camera
+    if (jsonData.camera) {
+        if (!Array.isArray(jsonData.camera.position) || jsonData.camera.position.length !== 3) {
+            errors.push("Camera 'position' must be [x, y, z] array");
+        }
+        if (!Array.isArray(jsonData.camera.rotation_euler) || jsonData.camera.rotation_euler.length !== 3) {
+            errors.push("Camera 'rotation_euler' must be [rx, ry, rz] array");
+        }
+    }
+
     return { valid: errors.length === 0, errors };
 }
 
@@ -530,45 +479,69 @@ import { constructPrompt } from './prompt-constructor';
 import type { GenerationParams } from './types';
 
 export async function generateBlenderData(params: GenerationParams): Promise<string> {
-    const { image } = params;
     const model = 'gemini-2.5-flash';
 
-    let systemPrompt = `You are an expert-level procedural content director for a Blender add-on. Your job is to take a user's high-level description and convert it into a detailed, structured JSON "recipe" that a Blender script can use to generate the 3D content. The JSON output MUST strictly conform to the provided schema.
+    // System prompt for Canvas3D v1.0.0 schema (matches Python backend)
+    const systemPrompt = `You are an expert procedural content generator for Canvas3D, a Blender add-on for generating dungeon and interior scenes.
 
-Key responsibilities:
-- Schema Conformance: Output only schema-conformant JSON. Start with schemaVersion '1.3'. Do not add conversational text.
-- Mesh Topology: Generated meshes must have valid, manifold topology (watertight, no self-intersections) with a consistent Counter-Clockwise (CCW) winding order. Face indices must always be valid and within the bounds of the vertex array.
-- UV Unwrapping: If generating mesh data, you MUST provide valid UV coordinates for all vertices.
-- Logical Consistency: You MUST ensure that any 'materialRef' or other reference points to an entity that you have defined within the same JSON output. For biomes, 'dominantSpecies.name' MUST match a 'variant' from the top-level 'objects' array.
-- PBR Materials: Create and reuse materials in the 'materials' array. Use physically-based values. Also, generate a harmonious 5-color palette based on the prompt.
-- Scene Structure: Organize objects into logical collections in 'sceneHierarchy'. Use 'name' from 'objectsToCreate' or 'variant' from 'objects' as identifiers. Provide a sensible default camera.
-- Procedural Materials: For complex materials, you can define a 'nodeTree' to describe a procedural shader graph.
-- Ecological Systems: For natural scenes, define biomes, seasonal variations, and general foliage properties in 'vegetationSystem'.`;
+CRITICAL REQUIREMENTS:
+- Output ONLY valid JSON conforming to the Canvas3D v1.0.0 schema
+- Set "version": "1.0.0" (REQUIRED)
+- Set "domain": "procedural_dungeon" for dungeons or "film_interior" for interiors
+- Provide a random "seed" (integer >= 0) for deterministic generation
+- For procedural_dungeon domain, ALWAYS include "grid" with cell_size_m (0.25-5.0) and dimensions (cols/rows 5-200)
+- All object IDs must be ASCII-safe (a-zA-Z0-9_-)
+- Include at least 1 light in "lighting" array
+- Camera must have "position" and "rotation_euler" arrays [x,y,z]
 
-    const finalSchema = JSON.parse(JSON.stringify(baseSceneSpecSchema));
+DUNGEON GENERATION GUIDE:
+- Objects can be: "room", "corridor_segment", "door", "prop_instance", "cube", "plane", etc.
+- Rooms need properties: { "width_cells": N, "height_cells": M }
+- Corridors need properties: { "length_cells": N, "direction": "north|south|east|west" }
+- Doors connect rooms/corridors, need grid_cell and properties.direction
+- All objects should have "grid_cell": { "col": C, "row": R } for grid placement
+- Materials array is optional but recommended for PBR materials
+- Use "blocked": true in properties to mark cells that block pathfinding
 
-    if (image) {
-        systemPrompt += `\n\nYour primary task is to analyze the reference image and prompt to generate a detailed 3D object in 'objectsToCreate'. Infer 'approximateScale', 'colorPalette', 'materialType'. Create a new PBR material for it in the 'materials' array and reference it by name in 'materialRef'. Then, generate the 'meshData' including a text description. If the prompt describes a broader scene, integrate the created object naturally.`;
-        (finalSchema.properties as any).objectsToCreate = { type: Type.ARRAY, description: "3D objects generated from image references.", items: createdObjectSchema };
-    } else {
-        systemPrompt += `\n\nBe creative and fill in details based on the prompt. For a "forest", create materials for ground/trees, define tree scatter objects, and set up a forest environment. For a "desert", create sand materials and dune-like terrain.`;
-    }
+EXAMPLE STRUCTURE:
+{
+  "version": "1.0.0",
+  "domain": "procedural_dungeon",
+  "seed": 42,
+  "grid": {
+    "cell_size_m": 3.0,
+    "dimensions": { "cols": 10, "rows": 10 }
+  },
+  "objects": [
+    { "id": "room_0", "type": "room", "grid_cell": { "col": 0, "row": 0 }, "properties": { "width_cells": 3, "height_cells": 3 }, "material": "stone_floor" },
+    { "id": "corridor_0_1", "type": "corridor_segment", "grid_cell": { "col": 3, "row": 1 }, "properties": { "length_cells": 2, "direction": "east" } },
+    { "id": "door_0", "type": "door", "grid_cell": { "col": 3, "row": 1 }, "properties": { "direction": "east" } }
+  ],
+  "lighting": [
+    { "type": "point", "position": [5.0, 5.0, 3.0], "intensity": 100.0, "color_rgb": [1.0, 0.9, 0.7] }
+  ],
+  "camera": {
+    "position": [15.0, 15.0, 20.0],
+    "rotation_euler": [0.9, 0.0, 0.8],
+    "fov_deg": 60.0
+  },
+  "materials": [
+    { "name": "stone_floor", "pbr": { "base_color": [0.5, 0.5, 0.5], "roughness": 0.8, "metallic": 0.0 } }
+  ]
+}
+
+Generate a creative, playable dungeon based on the user's prompt!`;
 
     try {
-        const contentParts = [];
-        if (image) {
-            contentParts.push({ inlineData: { data: image.base64, mimeType: image.mimeType } });
-        }
         const fullPrompt = constructPrompt(params);
-        contentParts.push({ text: fullPrompt });
 
         const response = await ai.models.generateContent({
             model: model,
-            contents: { parts: contentParts },
+            contents: fullPrompt,
             config: {
                 systemInstruction: systemPrompt,
                 responseMimeType: "application/json",
-                responseSchema: finalSchema,
+                responseSchema: baseSceneSpecSchema,
             },
         });
 
@@ -577,15 +550,15 @@ Key responsibilities:
             const parsedJson = JSON.parse(jsonString);
             const validationResult = validateGeneratedJSON(parsedJson);
             if (!validationResult.valid) {
-                throw new Error(`AI returned logically invalid JSON. Details: ${validationResult.errors.join('; ')}`);
+                throw new Error(`AI returned invalid JSON. Validation errors:\n${validationResult.errors.join('\n')}`);
             }
             return JSON.stringify(parsedJson, null, 2);
         } catch (jsonError) {
             console.error("Gemini returned invalid JSON or failed validation:", jsonString, jsonError);
             if (jsonError instanceof Error) {
-                throw new Error(`The AI returned a response that was not valid or logical JSON. Please try regenerating. Details: ${jsonError.message}`);
+                throw new Error(`The AI returned invalid JSON. Details: ${jsonError.message}`);
             }
-            throw new Error("The AI returned a response that was not valid or logical JSON. Please try regenerating.");
+            throw new Error("The AI returned invalid JSON. Please try regenerating.");
         }
     } catch (error) {
         console.error("Error calling Gemini API:", error);
