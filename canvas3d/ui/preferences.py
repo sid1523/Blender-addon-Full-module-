@@ -1,7 +1,8 @@
 # Canvas3D Preferences panel for API keys and settings
 
 import bpy
-from bpy.props import StringProperty, BoolProperty, IntProperty, FloatProperty
+from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
+
 
 # Add-on preferences class
 class Canvas3DPreferences(bpy.types.AddonPreferences):
@@ -21,6 +22,19 @@ class Canvas3DPreferences(bpy.types.AddonPreferences):
         name="Mock/Demo Mode",
         description="Enable demo mode with canned responses (no API calls)",
         default=False,
+    )
+    # Front-end UI server
+    server_enable: BoolProperty(
+        name="Enable Front-End Server",
+        description="Serve embedded front-end UI via HTTP on localhost",
+        default=False,
+    )
+    server_port: IntProperty(
+        name="Front-End Server Port",
+        description="Port for front-end HTTP server",
+        default=8000,
+        min=1024,
+        max=65535,
     )
 
     # Provider endpoints and models
@@ -55,7 +69,7 @@ class Canvas3DPreferences(bpy.types.AddonPreferences):
         soft_max=60.0,
     )
 
-    def draw(self, context):
+    def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
 
         # API Keys section
@@ -81,9 +95,18 @@ class Canvas3DPreferences(bpy.types.AddonPreferences):
         layout.label(text="Enable Mock Mode to test UI without keys.")
         layout.label(text="Adjust endpoints, models, rate limits, and timeout if using compatible providers or proxies.")
 
+        # Front-end server controls
+        layout.separator()
+        sbox = layout.box()
+        sbox.label(text="Front-End UI Server:")
+        sbox.prop(self, "server_enable")
+        if self.server_enable:
+            sbox.prop(self, "server_port")
+            sbox.label(text=f"UI available at http://127.0.0.1:{self.server_port}")
+
 # Registration
-def register():
+def register() -> None:
     bpy.utils.register_class(Canvas3DPreferences)
 
-def unregister():
+def unregister() -> None:
     bpy.utils.unregister_class(Canvas3DPreferences)

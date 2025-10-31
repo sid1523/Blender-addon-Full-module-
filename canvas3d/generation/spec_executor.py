@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import logging
 import random
-from typing import Any, Dict, Optional, Set, Tuple, List
+from typing import Any
 
-from ..utils.spec_validation import assert_valid_scene_spec, SpecValidationError
-from ..utils.cleanup import snapshot_datablocks, cleanup_new_datablocks
+from ..utils.cleanup import cleanup_new_datablocks, snapshot_datablocks
+from ..utils.spec_validation import SpecValidationError, assert_valid_scene_spec
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +53,10 @@ class SpecExecutor:
 
     def execute_scene_spec(
         self,
-        spec: Dict[str, Any],
-        request_id: Optional[str] = None,
-        expect_version: Optional[str] = "1.0.0",
-        timeout_sec: Optional[float] = None,  # reserved for future timing/telemetry
+        spec: dict[str, Any],
+        request_id: str | None = None,
+        expect_version: str | None = "1.0.0",
+        timeout_sec: float | None = None,  # reserved for future timing/telemetry
         dry_run_when_no_bpy: bool = True,
         cleanup_on_failure: bool = True,
     ) -> str:
@@ -100,7 +100,7 @@ class SpecExecutor:
 
         try:
             # Begin transactional context via Blender undo stack when available
-            if bpy and hasattr(bpy, "ops") and hasattr(getattr(bpy, "ops"), "ed") and hasattr(bpy.ops.ed, "undo_push"):
+            if bpy and hasattr(bpy, "ops") and hasattr(bpy.ops, "ed") and hasattr(bpy.ops.ed, "undo_push"):
                 try:
                     bpy.ops.ed.undo_push(message="Canvas3D Generation")
                 except Exception:
@@ -129,7 +129,7 @@ class SpecExecutor:
             logger.error(f"[{req}] Spec execution failed: {e}")
             # Best-effort rollback using Blender's undo stack
             try:
-                if bpy and hasattr(bpy, "ops") and hasattr(getattr(bpy, "ops"), "ed") and hasattr(bpy.ops.ed, "undo"):
+                if bpy and hasattr(bpy, "ops") and hasattr(bpy.ops, "ed") and hasattr(bpy.ops.ed, "undo"):
                     bpy.ops.ed.undo()
             except Exception:
                 pass
@@ -144,11 +144,11 @@ class SpecExecutor:
     # --------------------------
     # Internal helpers (Blender)
     # --------------------------
-    def _snapshot_datablocks(self) -> Dict[str, Set[str]]:
+    def _snapshot_datablocks(self) -> dict[str, set[str]]:
         """Delegate snapshot to shared cleanup utilities."""
         return snapshot_datablocks(bpy)
 
-    def _cleanup_new_datablocks(self, pre: Dict[str, Set[str]], temp_col_name: str) -> None:
+    def _cleanup_new_datablocks(self, pre: dict[str, set[str]], temp_col_name: str) -> None:
         """Delegate cleanup to shared cleanup utilities."""
         cleanup_new_datablocks(pre, temp_col_name, bpy)
 
@@ -347,7 +347,7 @@ class SpecExecutor:
     # --------------------------
     # Build primitives (MVP)
     # --------------------------
-    def _build_materials(self, spec: Dict[str, Any], temp_col) -> None:
+    def _build_materials(self, spec: dict[str, Any], temp_col) -> None:
         data = getattr(bpy, "data", None)
         if data is None:
             return
@@ -367,7 +367,7 @@ class SpecExecutor:
                 except Exception:
                     pass
 
-    def _build_objects(self, spec: Dict[str, Any], temp_col) -> None:
+    def _build_objects(self, spec: dict[str, Any], temp_col) -> None:
         """
         Build minimal geometry objects deterministically:
         - room: plane mesh sized by width/height in grid cells
@@ -566,14 +566,14 @@ class SpecExecutor:
                     if otype == "room":
                         w_cells = int(props.get("width_cells", 1) or 1)
                         h_cells = int(props.get("height_cells", 1) or 1)
-                        setattr(me, "Canvas3D_hint_size_xy_m", (w_cells * cell_size, h_cells * cell_size))
+                        me.Canvas3D_hint_size_xy_m = w_cells * cell_size, h_cells * cell_size
                     elif otype == "corridor_segment":
                         length_cells = int(props.get("length_cells", 1) or 1)
-                        setattr(me, "Canvas3D_hint_length_m", (length_cells * cell_size))
+                        me.Canvas3D_hint_length_m = length_cells * cell_size
                     elif otype == "door":
-                        setattr(me, "Canvas3D_hint_type", "door_cube")
+                        me.Canvas3D_hint_type = "door_cube"
                     elif otype == "prop_instance":
-                        setattr(me, "Canvas3D_hint_type", "prop_placeholder")
+                        me.Canvas3D_hint_type = "prop_placeholder"
             except Exception:
                 pass
 
@@ -599,7 +599,7 @@ class SpecExecutor:
             except Exception:
                 pass
 
-    def _build_lights(self, spec: Dict[str, Any], temp_col) -> None:
+    def _build_lights(self, spec: dict[str, Any], temp_col) -> None:
         """
         Create minimal light placeholders:
         - Prefer bpy.data.lights when available, else create object placeholders named Light_{i}.
@@ -641,7 +641,7 @@ class SpecExecutor:
             except Exception:
                 pass
 
-    def _build_camera(self, spec: Dict[str, Any], temp_col) -> None:
+    def _build_camera(self, spec: dict[str, Any], temp_col) -> None:
         """
         Create a minimal camera:
         - Prefer bpy.data.cameras when available; else create placeholder object named 'Camera_Main'.
@@ -681,7 +681,7 @@ class SpecExecutor:
     # --------------------------
     # Dungeon geometry builders
     # --------------------------
-    def _grid_to_world_xy(self, grid_cell: Dict[str, Any], cell_size: float) -> Tuple[float, float]:
+    def _grid_to_world_xy(self, grid_cell: dict[str, Any], cell_size: float) -> tuple[float, float]:
         try:
             col = int(grid_cell.get("col", 0))
             row = int(grid_cell.get("row", 0))
@@ -689,14 +689,14 @@ class SpecExecutor:
             col, row = 0, 0
         return (float(col) * cell_size, float(row) * cell_size)
 
-    def _collect_door_map(self, objs: List[Dict[str, Any]]) -> Dict[Tuple[int, int], List[Dict[str, Any]]]:
+    def _collect_door_map(self, objs: list[dict[str, Any]]) -> dict[tuple[int, int], list[dict[str, Any]]]:
         """
         Build a map from (col,row) -> list of door specs relevant to that cell.
         Each door entry includes:
           - 'direction': one of {'north','south','east','west'}
           - optional 'width_m' (float) or 'width_cells' (int) for opening width
         """
-        doors: Dict[Tuple[int, int], List[Dict[str, Any]]] = {}
+        doors: dict[tuple[int, int], list[dict[str, Any]]] = {}
         for o in objs or []:
             try:
                 if str(o.get("type", "")).lower() != "door":
@@ -708,7 +708,7 @@ class SpecExecutor:
                 d = str(props.get("direction", "") or "").lower()
                 if d not in {"north", "south", "east", "west"}:
                     d = "east"
-                entry: Dict[str, Any] = {"direction": d}
+                entry: dict[str, Any] = {"direction": d}
                 # Capture width hints if provided
                 try:
                     if "width_m" in props:
@@ -775,7 +775,7 @@ class SpecExecutor:
             except Exception:
                 return None
 
-    def _build_dungeon_room(self, temp_col, obj_spec: Dict[str, Any], cell_size: float, door_map: Dict[Tuple[int, int], List[Dict[str, Any]]]) -> None:
+    def _build_dungeon_room(self, temp_col, obj_spec: dict[str, Any], cell_size: float, door_map: dict[tuple[int, int], list[dict[str, Any]]]) -> None:
         """
         Build a dungeon room with:
         - Floor plane sized by width/height cells
@@ -828,7 +828,7 @@ class SpecExecutor:
         # Door openings info with real widths when provided
         room_doors = door_map.get((col, row), []) or []
 
-        def _door_width_m(d: Dict[str, Any]) -> float:
+        def _door_width_m(d: dict[str, Any]) -> float:
             # Resolve a single door's width in meters using provided hints
             try:
                 if "width_m" in d and isinstance(d["width_m"], (int, float)):
@@ -843,7 +843,7 @@ class SpecExecutor:
             return 0.9  # default door width (meters)
 
         # Compute opening centers and widths along a wall, evenly distributed.
-        def _opening_centers_and_widths(total_len: float, doors_side: List[Dict[str, Any]]) -> List[Tuple[float, float]]:
+        def _opening_centers_and_widths(total_len: float, doors_side: list[dict[str, Any]]) -> list[tuple[float, float]]:
             """
             Returns list of (center_m, width_m) for each opening along a wall of length total_len.
             Evenly distribute openings along the wall; default to midpoints when single opening.
@@ -855,7 +855,7 @@ class SpecExecutor:
             centers = [((k + 1) / float(n + 1)) * total_len for k in range(n)]
             return list(zip(centers, widths))
 
-        def _build_wall_with_bmesh(side: str, total_len: float, openings: List[Tuple[float, float]]) -> bool:
+        def _build_wall_with_bmesh(side: str, total_len: float, openings: list[tuple[float, float]]) -> bool:
             """
             Attempt to build a single wall mesh with carved openings using BMesh.
             Returns True on success and linking; False to allow fallback segmentation.
@@ -874,9 +874,9 @@ class SpecExecutor:
                 # Map L (length) to +X for south/north, to +Y for west/east
                 map_to_x = side in {"south", "north"}
                 # Build grid verts
-                grid: List[List[Any]] = []
+                grid: list[list[Any]] = []
                 for i in range(seg_len + 1):
-                    row_verts: List[Any] = []
+                    row_verts: list[Any] = []
                     for j in range(seg_h + 1):
                         L = total_len * (i / float(seg_len))
                         H = wall_height * (j / float(seg_h))
@@ -985,7 +985,7 @@ class SpecExecutor:
             openings = _opening_centers_and_widths(total_len, doors_side)
 
             # Compute solid intervals [start,end] along the wall axis excluding openings
-            segs: List[Tuple[float, float]] = []
+            segs: list[tuple[float, float]] = []
             start = 0.0
             eps = 1e-4
             for (c, w) in openings:
@@ -1038,7 +1038,7 @@ class SpecExecutor:
         # Build walls: North(+Y), South(-Y), East(+X), West(-X)
         collision_col = self._ensure_collision_collection(temp_col)
 
-        def _spawn_wall(name: str, length_m: float, center_xy: Tuple[float, float], axis: str):
+        def _spawn_wall(name: str, length_m: float, center_xy: tuple[float, float], axis: str):
             # axis 'x' means wall extends along X (east-west) with thickness along Y; 'y' vice versa
             w = max(wall_thick, 0.01)
             if axis == "x":
@@ -1055,7 +1055,7 @@ class SpecExecutor:
             # Collision hull: duplicate box with suffix, link under collision collection
             try:
                 if collision_col and box_me:
-                    col_me = self._create_box_mesh(name + "_COL_mesh", *(((length_m, w, wall_height) if axis == "x" else (w, length_m, wall_height))))
+                    col_me = self._create_box_mesh(name + "_COL_mesh", *((length_m, w, wall_height) if axis == "x" else (w, length_m, wall_height)))
                     col_obj = self._create_object_from_mesh(name + "_COL", col_me)
                     if col_obj:
                         col_obj.location = (center_xy[0], center_xy[1], wall_height / 2.0)
@@ -1082,7 +1082,7 @@ class SpecExecutor:
         except Exception:
             pass
 
-    def _build_dungeon_corridor(self, temp_col, obj_spec: Dict[str, Any], cell_size: float, door_map: Dict[Tuple[int, int], List[Dict[str, Any]]]) -> None:
+    def _build_dungeon_corridor(self, temp_col, obj_spec: dict[str, Any], cell_size: float, door_map: dict[tuple[int, int], list[dict[str, Any]]]) -> None:
         """
         Build a corridor segment:
         - Floor plane of width 1 cell and length N cells along direction
@@ -1126,7 +1126,7 @@ class SpecExecutor:
             # Side walls along X with door openings carved by segment spawning
             doors_here = door_map.get((col, row), []) or []
 
-            def _door_width_m_corr(d: Dict[str, Any]) -> float:
+            def _door_width_m_corr(d: dict[str, Any]) -> float:
                 try:
                     if "width_m" in d and isinstance(d["width_m"], (int, float)):
                         return max(0.5, float(d["width_m"]))
@@ -1139,7 +1139,7 @@ class SpecExecutor:
                     pass
                 return 0.9
 
-            def _opening_centers_and_widths_corr(total_len: float, doors_side: List[Dict[str, Any]]) -> List[Tuple[float, float]]:
+            def _opening_centers_and_widths_corr(total_len: float, doors_side: list[dict[str, Any]]) -> list[tuple[float, float]]:
                 n = len(doors_side)
                 if n <= 0:
                     return []
@@ -1151,7 +1151,7 @@ class SpecExecutor:
                 ds = [d for d in doors_here if str(d.get("direction", "")).lower() == side]
                 openings = _opening_centers_and_widths_corr(total_len, ds)
                 # Compute solid intervals [start,end] excluding openings
-                segs: List[Tuple[float, float]] = []
+                segs: list[tuple[float, float]] = []
                 startL = 0.0
                 eps = 1e-4
                 for (c, w) in openings:
@@ -1223,7 +1223,7 @@ class SpecExecutor:
             # Side walls along Y with door openings carved by segment spawning
             doors_here = door_map.get((col, row), []) or []
 
-            def _door_width_m_corr(d: Dict[str, Any]) -> float:
+            def _door_width_m_corr(d: dict[str, Any]) -> float:
                 try:
                     if "width_m" in d and isinstance(d["width_m"], (int, float)):
                         return max(0.5, float(d["width_m"]))
@@ -1236,7 +1236,7 @@ class SpecExecutor:
                     pass
                 return 0.9
 
-            def _opening_centers_and_widths_corr(total_len: float, doors_side: List[Dict[str, Any]]) -> List[Tuple[float, float]]:
+            def _opening_centers_and_widths_corr(total_len: float, doors_side: list[dict[str, Any]]) -> list[tuple[float, float]]:
                 n = len(doors_side)
                 if n <= 0:
                     return []
@@ -1247,7 +1247,7 @@ class SpecExecutor:
             def _spawn_side_segments_y(side: str, total_len: float) -> None:
                 ds = [d for d in doors_here if str(d.get("direction", "")).lower() == side]
                 openings = _opening_centers_and_widths_corr(total_len, ds)
-                segs: List[Tuple[float, float]] = []
+                segs: list[tuple[float, float]] = []
                 startL = 0.0
                 eps = 1e-4
                 for (c, w) in openings:

@@ -16,9 +16,10 @@
 # - Traversability checks (A*) will be added/integrated in a follow-up module.
 
 from __future__ import annotations
+
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Iterable, Set
+from typing import Any
 
 VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 ASCII_SAFE_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]+$")
@@ -67,7 +68,7 @@ def _is_vec3(value: Any) -> bool:
 
 
 
-def _require(cond: bool, issues: List[ValidationIssue], path: str, msg: str, code: str = "invalid") -> None:
+def _require(cond: bool, issues: list[ValidationIssue], path: str, msg: str, code: str = "invalid") -> None:
     if not cond:
         issues.append(ValidationIssue(path=path, message=msg, code=code))
 
@@ -79,14 +80,14 @@ def _type_of(value: Any) -> str:
 class SceneSpecValidator:
     """Validator for Canvas3D scene specs (domain=procedural_dungeon)."""
 
-    def __init__(self, expect_version: Optional[str] = None) -> None:
+    def __init__(self, expect_version: str | None = None) -> None:
         self.expect_version = expect_version  # if set, require exact match
 
     # -----------------
     # Top-level checks
     # -----------------
-    def validate(self, spec: Dict[str, Any]) -> List[ValidationIssue]:
-        issues: List[ValidationIssue] = []
+    def validate(self, spec: dict[str, Any]) -> list[ValidationIssue]:
+        issues: list[ValidationIssue] = []
 
         # Type
         _require(isinstance(spec, dict), issues, path="$", msg=f"Spec must be an object, got: {_type_of(spec)}", code="type")
@@ -117,7 +118,7 @@ class SceneSpecValidator:
 
         # units (optional, default 'meters')
         units = spec.get("units", "meters")
-        _require(units in UNITS_ALLOWED, issues, "$.units", f"units must be 'meters'", "enum")
+        _require(units in UNITS_ALLOWED, issues, "$.units", "units must be 'meters'", "enum")
 
         # seed
         seed = spec.get("seed")
@@ -168,8 +169,8 @@ class SceneSpecValidator:
         try:
             objs = spec.get("objects", []) or []
             # Build occupancy for adjacency checks
-            room_cells: Set[Tuple[int, int]] = set()
-            corridor_cells: Set[Tuple[int, int]] = set()
+            room_cells: set[tuple[int, int]] = set()
+            corridor_cells: set[tuple[int, int]] = set()
             for i, o in enumerate(objs):
                 try:
                     otype = str(o.get("type", "")).lower()
@@ -184,7 +185,7 @@ class SceneSpecValidator:
                 except Exception:
                     continue
 
-            def _neighbors(c: int, r: int) -> List[Tuple[int, int]]:
+            def _neighbors(c: int, r: int) -> list[tuple[int, int]]:
                 return [(c + 1, r), (c - 1, r), (c, r + 1), (c, r - 1)]
 
             # Doors must be adjacent to a room or corridor
@@ -235,7 +236,7 @@ class SceneSpecValidator:
     # -----------------
     # Section validators
     # -----------------
-    def _validate_metadata(self, meta: Any, issues: List[ValidationIssue]) -> None:
+    def _validate_metadata(self, meta: Any, issues: list[ValidationIssue]) -> None:
         _require(isinstance(meta, dict), issues, "$.metadata", f"metadata must be object, got: {_type_of(meta)}", "type")
         if not isinstance(meta, dict):
             return
@@ -251,7 +252,7 @@ class SceneSpecValidator:
         if notes is not None:
             _require(isinstance(notes, str), issues, "$.metadata.notes", f"notes must be string, got: {_type_of(notes)}", "type")
 
-    def _validate_grid(self, grid: Any, issues: List[ValidationIssue]) -> None:
+    def _validate_grid(self, grid: Any, issues: list[ValidationIssue]) -> None:
         _require(isinstance(grid, dict), issues, "$.grid", f"grid must be object, got: {_type_of(grid)}", "type")
         if not isinstance(grid, dict):
             return
@@ -276,11 +277,11 @@ class SceneSpecValidator:
             if isinstance(rows, int):
                 _require(5 <= rows <= 200, issues, "$.grid.dimensions.rows", "rows must be in [5, 200]", "range")
 
-    def _validate_materials(self, materials: Any, issues: List[ValidationIssue]) -> None:
+    def _validate_materials(self, materials: Any, issues: list[ValidationIssue]) -> None:
         _require(isinstance(materials, list), issues, "$.materials", f"materials must be array, got: {_type_of(materials)}", "type")
         if not isinstance(materials, list):
             return
-        names: List[str] = []
+        names: list[str] = []
         for i, m in enumerate(materials):
             p = f"$.materials[{i}]"
             _require(isinstance(m, dict), issues, p, f"material must be object, got: {_type_of(m)}", "type")
@@ -317,11 +318,11 @@ class SceneSpecValidator:
         except Exception:
             pass
 
-    def _validate_collections(self, collections: Any, issues: List[ValidationIssue]) -> None:
+    def _validate_collections(self, collections: Any, issues: list[ValidationIssue]) -> None:
         _require(isinstance(collections, list), issues, "$.collections", f"collections must be array, got: {_type_of(collections)}", "type")
         if not isinstance(collections, list):
             return
-        names: List[str] = []
+        names: list[str] = []
         for i, c in enumerate(collections):
             p = f"$.collections[{i}]"
             _require(isinstance(c, dict), issues, p, f"collection must be object, got: {_type_of(c)}", "type")
@@ -345,12 +346,12 @@ class SceneSpecValidator:
         except Exception:
             pass
 
-    def _validate_objects(self, objects: Any, issues: List[ValidationIssue]) -> None:
+    def _validate_objects(self, objects: Any, issues: list[ValidationIssue]) -> None:
         _require(isinstance(objects, list), issues, "$.objects", f"objects must be array, got: {_type_of(objects)}", "type")
         if not isinstance(objects, list):
             return
-        ids: List[str] = []
-        seen: Set[str] = set()
+        ids: list[str] = []
+        seen: set[str] = set()
         for i, o in enumerate(objects):
             p = f"$.objects[{i}]"
             _require(isinstance(o, dict), issues, p, f"object must be object, got: {_type_of(o)}", "type")
@@ -417,7 +418,7 @@ class SceneSpecValidator:
         except Exception:
             pass
 
-    def _validate_lighting(self, lights: Any, issues: List[ValidationIssue]) -> None:
+    def _validate_lighting(self, lights: Any, issues: list[ValidationIssue]) -> None:
         _require(isinstance(lights, list), issues, "$.lighting", f"lighting must be array, got: {_type_of(lights)}", "type")
         if not isinstance(lights, list):
             return
@@ -445,7 +446,7 @@ class SceneSpecValidator:
             if isinstance(color, list) and len(color) == 3 and all(isinstance(x, (int, float)) for x in color):
                 _require(all(0.0 <= float(x) <= 1.0 for x in color), issues, f"{p}.color_rgb", "color_rgb components must be in [0,1]", "range")
 
-    def _validate_camera(self, cam: Any, issues: List[ValidationIssue]) -> None:
+    def _validate_camera(self, cam: Any, issues: list[ValidationIssue]) -> None:
         _require(isinstance(cam, dict), issues, "$.camera", f"camera must be object, got: {_type_of(cam)}", "type")
         if not isinstance(cam, dict):
             return
@@ -458,7 +459,7 @@ class SceneSpecValidator:
         if isinstance(fov, (int, float)):
             _require(20.0 <= float(fov) <= 120.0, issues, "$.camera.fov_deg", "fov_deg must be in [20, 120]", "range")
 
-    def _validate_constraints(self, cons: Any, issues: List[ValidationIssue]) -> None:
+    def _validate_constraints(self, cons: Any, issues: list[ValidationIssue]) -> None:
         _require(isinstance(cons, dict), issues, "$.constraints", f"constraints must be object, got: {_type_of(cons)}", "type")
         if not isinstance(cons, dict):
             return
@@ -475,7 +476,7 @@ class SceneSpecValidator:
             if isinstance(mp, int):
                 _require(mp >= 1000, issues, "$.constraints.max_polycount", "max_polycount must be >= 1000", "minimum")
 
-    def _validate_best_practices(self, spec: Dict[str, Any]) -> List[ValidationIssue]:
+    def _validate_best_practices(self, spec: dict[str, Any]) -> list[ValidationIssue]:
         """
         Non-blocking semantic validation producing hints/warnings:
         - Recommend minimum grid area (cols*rows >= 50) to avoid cramped layouts.
@@ -483,7 +484,7 @@ class SceneSpecValidator:
         - Warn when camera FOV is extremely wide (>100°).
         Returns a list of ValidationIssue entries with code 'hint' or 'warning'.
         """
-        hints: List[ValidationIssue] = []
+        hints: list[ValidationIssue] = []
         # Grid size recommendation
         try:
             grid = spec.get("grid", {}) or {}
@@ -526,7 +527,7 @@ class SceneSpecValidator:
 # -----------------
 # Public API
 # -----------------
-def validate_scene_spec(spec: Dict[str, Any], expect_version: Optional[str] = None) -> Tuple[bool, List[ValidationIssue]]:
+def validate_scene_spec(spec: dict[str, Any], expect_version: str | None = None) -> tuple[bool, list[ValidationIssue]]:
     """
     Validate a scene spec dict against the Canvas3D v1.0.0 contract.
 
@@ -538,7 +539,7 @@ def validate_scene_spec(spec: Dict[str, Any], expect_version: Optional[str] = No
     return (len(issues) == 0, issues)
 
 
-def assert_valid_scene_spec(spec: Dict[str, Any], expect_version: Optional[str] = None) -> None:
+def assert_valid_scene_spec(spec: dict[str, Any], expect_version: str | None = None) -> None:
     """
     Validate and raise SpecValidationError with actionable, path-scoped messages if invalid.
     """

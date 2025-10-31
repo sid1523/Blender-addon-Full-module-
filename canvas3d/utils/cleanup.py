@@ -5,12 +5,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, Set, Optional
 
 logger = logging.getLogger(__name__)
 
 
-def snapshot_datablocks(bpy_module) -> Dict[str, Set[str]]:
+def snapshot_datablocks(bpy_module) -> dict[str, set[str]]:
     """
     Snapshot existing datablock names. This allows targeted cleanup of only new items
     created during an execution attempt.
@@ -18,7 +17,7 @@ def snapshot_datablocks(bpy_module) -> Dict[str, Set[str]]:
     Returns a dict mapping category -> set of names.
     Categories: collections, objects, meshes, materials, lights, cameras
     """
-    snap: Dict[str, Set[str]] = {
+    snap: dict[str, set[str]] = {
         "collections": set(),
         "objects": set(),
         "meshes": set(),
@@ -130,7 +129,7 @@ def _safe_remove_object(data, obj_name: str) -> None:
         pass
 
 
-def cleanup_new_datablocks(pre_snapshot: Dict[str, Set[str]], temp_collection_name: Optional[str], bpy_module) -> None:
+def cleanup_new_datablocks(pre_snapshot: dict[str, set[str]], temp_collection_name: str | None, bpy_module) -> None:
     """
     Remove only newly created datablocks by comparing current bpy.data against the pre-snapshot.
 

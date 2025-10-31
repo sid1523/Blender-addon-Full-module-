@@ -2,16 +2,18 @@
 # Deterministic summaries and heuristic enhancement prompts for director-friendly iteration.
 
 from __future__ import annotations
-from typing import Any, Dict, List
 
-def _safe_get(d: Dict[str, Any], key: str, default=None):
+from typing import Any
+
+
+def _safe_get(d: dict[str, Any], key: str, default=None):
     try:
         return d.get(key, default)
     except Exception:
         return default
 
-def _count_objects_by_type(spec: Dict[str, Any]) -> Dict[str, int]:
-    counts: Dict[str, int] = {}
+def _count_objects_by_type(spec: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
     try:
         for o in spec.get("objects", []) or []:
             t = str((o or {}).get("type", "unknown")).lower()
@@ -20,7 +22,7 @@ def _count_objects_by_type(spec: Dict[str, Any]) -> Dict[str, int]:
         pass
     return counts
 
-def summarize_variant(spec: Dict[str, Any]) -> str:
+def summarize_variant(spec: dict[str, Any]) -> str:
     """
     Produce a compact, human-readable summary for a variant to show in the UI list.
     """
@@ -39,7 +41,7 @@ def summarize_variant(spec: Dict[str, Any]) -> str:
     counts = _count_objects_by_type(spec)
     # craft counts string with common types first
     order = ["room", "corridor_segment", "door", "stair", "prop_instance", "cube", "plane", "cylinder"]
-    parts: List[str] = []
+    parts: list[str] = []
     for k in order:
         if k in counts:
             parts.append(f"{k}:{counts[k]}")
@@ -70,12 +72,12 @@ def summarize_variant(spec: Dict[str, Any]) -> str:
         head += f" | {grid_s}"
     return f"{head} | {objs_s} | {lights_s} | {cam_s}"
 
-def generate_heuristic_enhancements(spec: Dict[str, Any], controls: Dict[str, Any]) -> List[str]:
+def generate_heuristic_enhancements(spec: dict[str, Any], controls: dict[str, Any]) -> list[str]:
     """
     Generate up to ~20 concise, actionable, director-friendly enhancement suggestions
     based on the selected spec and current controls. Deterministic and safe.
     """
-    out: List[str] = []
+    out: list[str] = []
     domain = str((controls or {}).get("domain", spec.get("domain", "procedural_dungeon")))
     size = str((controls or {}).get("size_scale", "medium"))
     density = str((controls or {}).get("complexity_density", "balanced"))
@@ -161,7 +163,7 @@ def generate_heuristic_enhancements(spec: Dict[str, Any], controls: Dict[str, An
 
     # Deduplicate while preserving order, trim to max 20
     seen = set()
-    final: List[str] = []
+    final: list[str] = []
     for s in out:
         k = (s or "").strip()
         if not k:

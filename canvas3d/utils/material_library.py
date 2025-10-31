@@ -24,8 +24,10 @@
 #   as per conventions to enable automatic mapping.
 
 from __future__ import annotations
-from typing import Any, Dict, Optional, Tuple
+
+import logging
 import os
+from typing import Any
 
 try:
     import bpy  # type: ignore
@@ -34,35 +36,38 @@ except Exception:
 
 from .blender_helpers import get_config_dir
 
+logger = logging.getLogger(__name__)
+
 _SUPPORTED_EXTS = (".png", ".jpg", ".jpeg")
 
 def _material_dir(name: str) -> str:
     base = get_config_dir()
     return os.path.join(base, "materials", str(name))
 
-def _find_tex(path_dir: str, basename: str) -> Optional[str]:
+def _find_tex(path_dir: str, basename: str) -> str | None:
     for ext in _SUPPORTED_EXTS:
         fp = os.path.join(path_dir, basename + ext)
         if os.path.isfile(fp):
             return fp
     return None
 
-def _load_image(filepath: str):
+def _load_image(filepath: str) -> object | None:
     if bpy is None:
         return None
     try:
         return bpy.data.images.load(filepath)
-    except Exception:
+    except Exception as ex:
+        logger.debug("image load failed: %s", ex)
         # Try to reuse if already loaded
         try:
             for img in getattr(getattr(bpy, "data", None), "images", []):
                 if getattr(img, "filepath", "") == filepath:
                     return img
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug("scan images failed: %s", ex)
     return None
 
-def _get_or_create_material(name: str):
+def _get_or_create_material(name: str) -> object | None:
     if bpy is None:
         return None
     data = getattr(bpy, "data", None)
@@ -80,10 +85,11 @@ def _get_or_create_material(name: str):
         mat = data.materials.new(name=name)
         mat.use_nodes = True
         return mat
-    except Exception:
+    except Exception as ex:
+        logger.debug("create material failed: %s", ex)
         return None
 
-def _get_bsdf(mat):
+def _get_bsdf(mat: object) -> object | None:
     try:
         nt = mat.node_tree
         if nt is None:
@@ -105,13 +111,14 @@ def _get_bsdf(mat):
             out.location = (200, 0)
         try:
             nt.links.new(bsdf.outputs.get("BSDF"), out.inputs.get("Surface"))
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug("link BSDF to output failed: %s", ex)
         return bsdf
-    except Exception:
+    except Exception as ex:
+        logger.debug("get/create BSDF failed: %s", ex)
         return None
 
-def _set_bsdf_fallback(bsdf, pbr: Optional[Dict[str, Any]]) -> None:
+def _set_bsdf_fallback(bsdf: object, pbr: dict[str, Any] | None) -> None:
     if bsdf is None:
         return
     # Defaults
@@ -123,8 +130,8 @@ def _set_bsdf_fallback(bsdf, pbr: Optional[Dict[str, Any]]) -> None:
         if isinstance(bc, list) and len(bc) == 3:
             try:
                 base = (float(bc[0]), float(bc[1]), float(bc[2]), 1.0)
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.debug("parse base_color failed: %s", ex)
         m = pbr.get("metallic")
         if isinstance(m, (int, float)):
             metallic = float(m)
@@ -133,28 +140,29 @@ def _set_bsdf_fallback(bsdf, pbr: Optional[Dict[str, Any]]) -> None:
             rough = float(r)
     try:
         bsdf.inputs["Base Color"].default_value = base
-    except Exception:
-        pass
+    except Exception as ex:
+        logger.debug("set Base Color failed: %s", ex)
     try:
         bsdf.inputs["Metallic"].default_value = metallic
-    except Exception:
-        pass
+    except Exception as ex:
+        logger.debug("set Metallic failed: %s", ex)
     try:
         bsdf.inputs["Roughness"].default_value = rough
-    except Exception:
-        pass
+    except Exception as ex:
+        logger.debug("set Roughness failed: %s", ex)
 
-def _create_tex_node(nt, image, label: str, loc: Tuple[int, int]):
+def _create_tex_node(nt: object, image: object, label: str, loc: tuple[int, int]) -> object | None:
     try:
         node = nt.nodes.new("ShaderNodeTexImage")
         node.image = image
         node.label = label
         node.location = loc
         return node
-    except Exception:
+    except Exception as ex:
+        logger.debug("create texture node failed: %s", ex)
         return None
 
-def ensure_pbr_material(name: str, pbr: Optional[Dict[str, Any]] = None):
+def ensure_pbr_material(name: str, pbr: dict[str, Any] | None = None) -> object | None:
     """
     Ensure a material exists with Principled BSDF nodes and CC0 PBR textures if found.
     Returns the material or None when bpy isn't available.
@@ -188,20 +196,20 @@ def ensure_pbr_material(name: str, pbr: Optional[Dict[str, Any]] = None):
         tex_base = _create_tex_node(nt, base_img, "BaseColor", (-400, 0))
         try:
             nt.links.new(tex_base.outputs.get("Color"), bsdf.inputs.get("Base Color"))
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug("link base color texture failed: %s", ex)
     if met_img:
         tex_met = _create_tex_node(nt, met_img, "Metallic", (-400, -150))
         try:
             nt.links.new(tex_met.outputs.get("Color"), bsdf.inputs.get("Metallic"))
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug("link metallic texture failed: %s", ex)
     if rough_img:
         tex_rough = _create_tex_node(nt, rough_img, "Roughness", (-400, -300))
         try:
             nt.links.new(tex_rough.outputs.get("Color"), bsdf.inputs.get("Roughness"))
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug("link roughness texture failed: %s", ex)
     if norm_img:
         # Normal map requires a normal map node
         try:
@@ -211,8 +219,8 @@ def ensure_pbr_material(name: str, pbr: Optional[Dict[str, Any]] = None):
             if tex_norm and nmap:
                 nt.links.new(tex_norm.outputs.get("Color"), nmap.inputs.get("Color"))
                 nt.links.new(nmap.outputs.get("Normal"), bsdf.inputs.get("Normal"))
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug("link normal texture failed: %s", ex)
 
     return mat
 

@@ -1,12 +1,11 @@
 # Canvas3D Scene Builder: Safe execution of generated Blender code
 
 import logging
-import time
 import random
-from typing import Optional
+import time
 
-from ..utils.validation import validate_scene_code, make_restricted_globals, CodeValidationError
-from ..utils.cleanup import snapshot_datablocks, cleanup_new_datablocks
+from ..utils.cleanup import cleanup_new_datablocks, snapshot_datablocks
+from ..utils.validation import CodeValidationError, make_restricted_globals, validate_scene_code
 
 try:
     import bpy
@@ -25,11 +24,11 @@ class SceneBuilder:
     def __init__(self) -> None:
         pass
 
-    def execute_scene_code(
+    def execute_scene_code(  # noqa: C901
         self,
         code: str,
-        request_id: Optional[str] = None,
-        timeout_sec: Optional[float] = None,
+        request_id: str | None = None,
+        timeout_sec: float | None = None,
         dry_run_when_no_bpy: bool = True,
         cleanup_on_failure: bool = True,
     ) -> None:
@@ -88,7 +87,7 @@ class SceneBuilder:
         safe_locals = {}
 
         try:
-            exec(compiled, safe_globals, safe_locals)
+            exec(compiled, safe_globals, safe_locals)  # noqa: S102 - sandboxed via make_restricted_globals
         except Exception as e:
             # Extract line info from traceback referencing our compiled filename
             line_info = ""
@@ -118,8 +117,8 @@ class SceneBuilder:
         logger.info(f"[{req_id}] Scene executed successfully in {dur:.3f}s.")
 
 # Registration (no-op)
-def register():
+def register() -> None:
     pass
 
-def unregister():
+def unregister() -> None:
     pass

@@ -42,16 +42,22 @@ exclude = ["**/.pytest_cache/**"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-# Enable common rule sets: pyflakes/pycodestyle/imports/bugbear/upgrade/security/naming/annotations/complexity
-select = ["E", "F", "I", "B", "UP", "S", "N", "ANN", "C90"]
-ignore = [
-  "E501",  # handled by line-length
-]
 exclude = [
   "**/.pytest_cache/**",
   "docs/schema/*.json"
 ]
 
+# Lint configuration (new-style keys)
+[tool.ruff.lint]
+# Enable common rule sets: pyflakes/pycodestyle/imports/bugbear/upgrade/security/naming/annotations/complexity
+select = ["E", "F", "I", "B", "UP", "S", "N", "ANN", "C90"]
+ignore = [
+  "E501",  # handled by line-length
+]
+
+# Relax test-specific rules to avoid noisy failures
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S102", "I001", "F401", "F841", "ANN"]
 [tool.black]
 line-length = 100
 target-version = ["py310"]

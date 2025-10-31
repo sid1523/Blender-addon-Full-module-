@@ -2,6 +2,7 @@
 
 import bpy
 
+
 # Variants list item and UIList for browsing generated variants
 class CANVAS3D_VariantItem(bpy.types.PropertyGroup):
     summary: bpy.props.StringProperty(
@@ -18,7 +19,7 @@ class CANVAS3D_VariantItem(bpy.types.PropertyGroup):
 class CANVAS3D_UL_Variants(bpy.types.UIList):
     bl_idname = "CANVAS3D_UL_variants"
 
-    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+    def draw_item(self, context: bpy.types.Context, layout: bpy.types.UILayout, data: object, item: object, icon: int, active_data: object, active_propname: str, index: int) -> None:
         # item: CANVAS3D_VariantItem
         text = getattr(item, "summary", None) or f"Variant {index}"
         if self.layout_type in {'DEFAULT', 'COMPACT'}:
@@ -28,7 +29,7 @@ class CANVAS3D_UL_Variants(bpy.types.UIList):
             layout.label(text=str(index))
 
 # History list item and UIList (for comparison/revert)
-class CANVAS3D_HistoryItem(bpy.types.PropertyGroup):
+class CANVAS3D_HistoryItem(bpy.types.PropertyGroup):  # noqa: N801
     summary: bpy.props.StringProperty(
         name="Summary",
         description="Generation history entry summary"
@@ -40,10 +41,10 @@ class CANVAS3D_HistoryItem(bpy.types.PropertyGroup):
         min=0
     )
 
-class CANVAS3D_UL_History(bpy.types.UIList):
+class CANVAS3D_UL_History(bpy.types.UIList):  # noqa: N801
     bl_idname = "CANVAS3D_UL_history"
 
-    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+    def draw_item(self, context: bpy.types.Context, layout: bpy.types.UILayout, data: object, item: object, icon: int, active_data: object, active_propname: str, index: int) -> None:
         text = getattr(item, "summary", None) or f"Entry {index}"
         if self.layout_type in {'DEFAULT', 'COMPACT'}:
             layout.label(text=text, icon='FILE_TICK')
@@ -52,14 +53,14 @@ class CANVAS3D_UL_History(bpy.types.UIList):
             layout.label(text=str(index))
 
 # Main Chat Panel
-class CANVAS3D_PT_ChatPanel(bpy.types.Panel):
+class CANVAS3D_PT_ChatPanel(bpy.types.Panel):  # noqa: N801
     bl_label = "Canvas3D Generator"
     bl_idname = "CANVAS3D_PT_chat_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'Canvas3D'  # Sidebar tab name
 
-    def draw(self, context):
+    def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
 
         # Prompt input field
@@ -159,7 +160,7 @@ class CANVAS3D_PT_ChatPanel(bpy.types.Panel):
         info_box.label(text="Mock/Demo mode uses canned responses (no API calls)")
 
 # Registration
-def register():
+def register() -> None:
     # Scene properties for UI state
     bpy.types.Scene.canvas3d_prompt = bpy.props.StringProperty(
         name="Prompt",
@@ -377,7 +378,7 @@ def register():
 
     bpy.utils.register_class(CANVAS3D_PT_ChatPanel)
 
-def unregister():
+def unregister() -> None:
     bpy.utils.unregister_class(CANVAS3D_PT_ChatPanel)
 
     # Clean up scene properties

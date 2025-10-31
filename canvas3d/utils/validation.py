@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import ast
 import logging
-from typing import Iterable, Optional, Set
+from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
-ALLOWED_IMPORTS: Set[str] = {"bpy", "math", "mathutils"}
+ALLOWED_IMPORTS: set[str] = {"bpy", "math", "mathutils"}
 
 
 class CodeValidationError(Exception):
@@ -17,7 +17,7 @@ class CodeValidationError(Exception):
 
 
 # Conservative defaults for MVP. Can be expanded in Phase 3.
-FORBIDDEN_IMPORTS: Set[str] = {
+FORBIDDEN_IMPORTS: set[str] = {
     "os",
     "sys",
     "subprocess",
@@ -28,7 +28,7 @@ FORBIDDEN_IMPORTS: Set[str] = {
     "multiprocessing",
     "threading",
 }
-FORBIDDEN_CALLS: Set[str] = {
+FORBIDDEN_CALLS: set[str] = {
     "open",
     "exec",
     "eval",
@@ -63,7 +63,7 @@ FORBIDDEN_TOKENS: Iterable[str] = (
 # bpy.ops security policy:
 # Allow only conservative operator namespaces used to build scenes.
 # Explicitly forbid namespaces that can write to disk, render, or otherwise cause side effects.
-ALLOWED_BPY_OPS_PREFIXES: Set[str] = {
+ALLOWED_BPY_OPS_PREFIXES: set[str] = {
     "object",
     "mesh",
     "camera",
@@ -73,7 +73,7 @@ ALLOWED_BPY_OPS_PREFIXES: Set[str] = {
     "collection",
 }
 
-FORBIDDEN_BPY_OPS_PREFIXES: Set[str] = {
+FORBIDDEN_BPY_OPS_PREFIXES: set[str] = {
     "wm",
     "render",
     "image",
@@ -89,18 +89,18 @@ FORBIDDEN_BPY_OPS_PREFIXES: Set[str] = {
 }
 
 
-def quick_token_scan(code: str) -> Optional[str]:
+def quick_token_scan(code: str) -> str | None:
     """
     Cheap substring-based scan to catch blatant unsafe usage early.
     Returns the first offending token found, or None if clean.
     """
     lowered = code.lower()
-    for token in FORBIDDEN_TOKENS:
+    for forbidden_token in FORBIDDEN_TOKENS:
         # Allow AST to handle "with open(...)" for better error context; only flag direct open(...)
-        if token == "open(" and "with open(" in lowered:
+        if forbidden_token == "open(" and "with open(" in lowered:
             continue
-        if token in lowered:
-            return token
+        if forbidden_token in lowered:
+            return forbidden_token
     return None
 
 
@@ -113,7 +113,7 @@ class _SafeCodeVisitor(ast.NodeVisitor):
         super().__init__()
         self.errors: list[str] = []
 
-    def _add_error(self, msg: str, node: Optional[ast.AST] = None) -> None:
+    def _add_error(self, msg: str, node: ast.AST | None = None) -> None:
         loc = ""
         if node is not None and hasattr(node, "lineno"):
             loc = f" (line {getattr(node, 'lineno', '?')})"
@@ -226,23 +226,23 @@ def validate_scene_code(code: str) -> None:
     if not isinstance(code, str) or not code.strip():
         raise CodeValidationError("Code is empty")
 
-    token = quick_token_scan(code)
-    if token:
+    found_token = quick_token_scan(code)
+    if found_token:
         # Produce clearer, test-friendly messages for common cases, while keeping a fast path.
-        if token.startswith("import "):
-            mod = token.split(" ", 1)[1].strip()
+        if found_token.startswith("import "):
+            mod = found_token.split(" ", 1)[1].strip()
             raise CodeValidationError(f"Import not allowed: {mod}")
-        if token.startswith("exec("):
+        if found_token.startswith("exec("):
             raise CodeValidationError("Forbidden call: exec()")
-        if token.startswith("eval("):
+        if found_token.startswith("eval("):
             raise CodeValidationError("Forbidden call: eval()")
-        if token.startswith("compile("):
+        if found_token.startswith("compile("):
             raise CodeValidationError("Forbidden call: compile()")
-        if token.startswith("input("):
+        if found_token.startswith("input("):
             raise CodeValidationError("Forbidden call: input()")
-        if token == "__import__":
+        if found_token == "__import__":
             raise CodeValidationError("Forbidden call: __import__()")
-        raise CodeValidationError(f"Code contains forbidden token: {token}")
+        raise CodeValidationError(f"Code contains forbidden token: {found_token}")
 
     try:
         tree = ast.parse(code, filename="<canvas3d_generated>", mode="exec")
@@ -257,7 +257,7 @@ def validate_scene_code(code: str) -> None:
         raise CodeValidationError("Unsafe code detected:\n- " + "\n- ".join(visitor.errors))
 
 
-def make_restricted_globals(bpy_module, allowed_imports: Optional[Set[str]] = None, extra_symbols: Optional[dict] = None) -> dict:
+def make_restricted_globals(bpy_module: object, allowed_imports: set[str] | None = None, extra_symbols: dict[str, object] | None = None) -> dict[str, object]:
     """
     Construct a constrained globals dict for exec():
     - Restricts builtins to a safe, minimal set
@@ -280,7 +280,7 @@ def make_restricted_globals(bpy_module, allowed_imports: Optional[Set[str]] = No
             # Module may not exist in environment (e.g., mathutils outside Blender); skip silently
             logger.debug(f"Optional allowed module not available: {name} ({ex})")
 
-    def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+    def _safe_import(name: str, globals: dict | None = None, locals: dict | None = None, fromlist: tuple[str, ...] = (), level: int = 0) -> object:
         base = (name or "").split(".")[0]
         if base in allowed:
             return importlib.import_module(name)
@@ -288,15 +288,15 @@ def make_restricted_globals(bpy_module, allowed_imports: Optional[Set[str]] = No
 
     # Runtime guard: proxy for bpy.ops that enforces ALLOWED_BPY_OPS_PREFIXES/FORBIDDEN_BPY_OPS_PREFIXES
     class _OpsProxy:
-        def __init__(self, real_ops, path=()):
+        def __init__(self, real_ops: object, path: tuple[str, ...] = ()) -> None:
             self._real_ops = real_ops
             self._path = tuple(path)
 
-        def __getattr__(self, name: str):
+        def __getattr__(self, name: str) -> _OpsProxy:
             # accumulate attribute chain segments (e.g., object, camera_add)
             return _OpsProxy(self._real_ops, self._path + (name,))
 
-        def __call__(self, *args, **kwargs):
+        def __call__(self, *args: object, **kwargs: object) -> object:
             # Validate fully qualified op id before dispatch
             parts = list(self._path)
             op_id = "bpy.ops." + ".".join(parts) if parts else "bpy.ops"
@@ -313,11 +313,11 @@ def make_restricted_globals(bpy_module, allowed_imports: Optional[Set[str]] = No
 
     class _BpyProxy:
         """Expose bpy with guarded ops; pass-through for other attributes."""
-        def __init__(self, real_bpy):
+        def __init__(self, real_bpy: object) -> None:
             self._real_bpy = real_bpy
             self.ops = _OpsProxy(real_bpy.ops) if hasattr(real_bpy, "ops") else None
 
-        def __getattr__(self, name: str):
+        def __getattr__(self, name: str) -> object:
             # Prefer explicit ops proxy; otherwise delegate attribute to real bpy
             if name == "ops":
                 return self.ops
@@ -376,11 +376,11 @@ def make_restricted_globals(bpy_module, allowed_imports: Optional[Set[str]] = No
     return sandbox_globals
 
 
-def register():
+def register() -> None:
     # No classes to register
     pass
 
 
-def unregister():
+def unregister() -> None:
     # No classes to unregister
     pass

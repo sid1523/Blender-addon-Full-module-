@@ -1,16 +1,18 @@
 # Canvas3D Orchestrator: Main controller for scene generation
 
-import logging
-import threading
-import queue
-import uuid
-import time
-from typing import Optional, List, Dict
+from __future__ import annotations
 
-from .llm_interface import LLMInterface
-from ..generation.spec_executor import SpecExecutor, SpecExecutionError
-from ..utils.traversability import is_spec_traversable
+import logging
+import queue
+import threading
+import time
+import uuid
+from typing import Any
+
+from ..generation.spec_executor import SpecExecutionError, SpecExecutor
 from ..utils.blender_helpers import append_history, get_prompt
+from ..utils.traversability import is_spec_traversable
+from .llm_interface import LLMInterface
 
 try:
     import bpy  # for timers and main-thread execution
@@ -22,7 +24,7 @@ logger = logging.getLogger(__name__)
 class Canvas3DOrchestrator:
     """Orchestrates scene generation from prompt to execution with non-blocking, Blender-safe workflow."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Initialize components
         self.llm = LLMInterface()
         # New spec-based deterministic executor (preferred path)
@@ -34,12 +36,12 @@ class Canvas3DOrchestrator:
         # Internal state for async operations
         self._lock = threading.Lock()
         # Use typing aliases for compatibility across Python versions
-        self._status_map: Dict[str, str] = {}
+        self._status_map: dict[str, str] = {}
         # Variants and controls memory per request_id (for selection/execution flow)
-        self._variants_map: Dict[str, List[dict]] = {}
-        self._controls_map: Dict[str, dict] = {}
+        self._variants_map: dict[str, list[dict]] = {}
+        self._controls_map: dict[str, dict] = {}
         # Variants retention policy
-        self._variants_timestamps: Dict[str, float] = {}
+        self._variants_timestamps: dict[str, float] = {}
         self._variants_ttl_sec: float = 600.0  # 10 minutes TTL
         self._variants_max_entries: int = 10   # cap variants bundles retained
 
@@ -49,7 +51,7 @@ class Canvas3DOrchestrator:
 
         # Register a repeating timer to process main-thread queue when bpy is available
         if bpy and hasattr(bpy, "app") and hasattr(bpy.app, "timers"):
-            def _process_queue():
+            def _process_queue() -> float:
                 try:
                     # Process up to N tasks per tick to avoid long blocking
                     for _ in range(8):
@@ -62,19 +64,19 @@ class Canvas3DOrchestrator:
                         except Exception as ex:
                             logger.error(f"Error in queued main-thread task: {ex}")
                     # Continue timer
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logger.debug(f"Main-thread queue processing failed: {ex}")
                 return 0.05  # run again in 50ms
 
             try:
                 bpy.app.timers.register(_process_queue, first_interval=0.1)
-            except Exception:
+            except Exception as ex:
                 # If registering fails, that's fine; fallback will still use timers inline
-                pass
+                logger.debug(f"Failed to register queue timer: {ex}")
 
-    def _set_status_main_thread(self, context, text: str) -> None:
+    def _set_status_main_thread(self, context: object, text: str) -> None:
         """Set status text on Blender main thread using bpy.app.timers if available."""
-        def _apply():
+        def _apply() -> None:
             try:
                 if context and hasattr(context, "scene") and hasattr(context.scene, "canvas3d_status"):
                     context.scene.canvas3d_status = text
@@ -121,7 +123,7 @@ class Canvas3DOrchestrator:
         # Default: first line only
         return s.splitlines()[0]
 
-    def _traversability_gate(self, spec: dict, request_id: str, context, label: str = "spec") -> bool:
+    def _traversability_gate(self, spec: dict, request_id: str, context: object, label: str = "spec") -> bool:
         """
         Gate execution for dungeon specs using traversability validation.
         - Only applies to domain == 'procedural_dungeon' (other domains pass through).
@@ -146,8 +148,8 @@ class Canvas3DOrchestrator:
                     "path_len": path_len,
                     "info": info,
                 })
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.debug(f"append_history failed: {ex}")
 
             if not ok:
                 msg = (
@@ -163,7 +165,7 @@ class Canvas3DOrchestrator:
             # Fail open on unexpected validator errors; log for diagnostics
             logger.error(f"[{request_id}] Traversability gate error: {ex}")
             return True
-    def start_generate_scene(self, prompt: str, context) -> str:
+    def start_generate_scene(self, prompt: str, context: object) -> str:
         """
         Start non-blocking scene generation. Returns a request_id used for log correlation.
         The LLM calls run in a background thread; the final scene execution is scheduled on Blender's main thread.
@@ -183,7 +185,7 @@ class Canvas3DOrchestrator:
         return request_id
 
     # -------- Variants flow (generate 15–20 options, persist selection, execute) --------
-    def start_generate_variants(self, prompt: str, controls: Optional[dict], context) -> str:
+    def start_generate_variants(self, prompt: str, controls: dict | None, context: object) -> str:
         """
         Start non-blocking generation of a high-quality bundle of scene spec variants.
         Stores variants and controls in memory keyed by request_id. UI can later call
@@ -205,7 +207,7 @@ class Canvas3DOrchestrator:
         t.start()
         return request_id
 
-    def start_load_spec(self, spec: Dict[str, Any], context) -> str:
+    def start_load_spec(self, spec: dict[str, Any], context: object) -> str:
         """
         Start non-blocking loading of a JSON scene spec (from front-end) and build in Blender.
         Returns a request_id for status tracking.
@@ -224,7 +226,7 @@ class Canvas3DOrchestrator:
         t.start()
         return request_id
 
-    def _worker_generate_variants(self, prompt: str, controls: dict, context, request_id: str) -> None:
+    def _worker_generate_variants(self, prompt: str, controls: dict, context: object, request_id: str) -> None:
         """Background thread: request variant bundle and store it for selection."""
         start_ts = time.perf_counter()
         try:
@@ -250,8 +252,8 @@ class Canvas3DOrchestrator:
                     "prompt": prompt,
                     "controls": controls,
                 })
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.debug(f"append_history failed: {ex}")
         except Exception as e:
             friendly = self._friendly_error(e)
             self._set_status_main_thread(context, f"Error (variants): {friendly}")
@@ -260,7 +262,7 @@ class Canvas3DOrchestrator:
             dur = time.perf_counter() - start_ts
             logger.info(f"[{request_id}] Variants orchestration finished in {dur:.2f}s")
 
-    def get_variant_spec(self, request_id: str, index: int) -> Optional[dict]:
+    def get_variant_spec(self, request_id: str, index: int) -> dict | None:
         """
         Return a single variant spec for a given request_id and index, or None if unavailable/out of range.
         """
@@ -277,7 +279,7 @@ class Canvas3DOrchestrator:
                 spec = arr[index]
             return spec
 
-    def get_variants_snapshot(self, request_id: str) -> List[dict]:
+    def get_variants_snapshot(self, request_id: str) -> list[dict]:
         """Return a shallow copy of variants for a given request_id (for UI listing)."""
         with self._lock:
             # Purge expired/overflow entries before returning snapshot
@@ -304,11 +306,11 @@ class Canvas3DOrchestrator:
                     self._variants_map.pop(rid, None)
                     self._controls_map.pop(rid, None)
                     self._variants_timestamps.pop(rid, None)
-        except Exception:
+        except Exception as ex:
             # Non-fatal
-            pass
+            logger.debug(f"Variants purge failed: {ex}")
 
-    def clear_variants(self, request_id: Optional[str] = None) -> int:
+    def clear_variants(self, request_id: str | None = None) -> int:
         """
         Clear stored variants:
         - When request_id provided, clears only that bundle and returns 1 if it existed else 0
@@ -327,7 +329,7 @@ class Canvas3DOrchestrator:
             self._variants_timestamps.clear()
             return count
 
-    def select_and_execute_variant(self, request_id: str, index: int, context) -> bool:
+    def select_and_execute_variant(self, request_id: str, index: int, context: object) -> bool:  # noqa: C901
         """
         Persist selection and execute deterministically via SpecExecutor.
         Mirrors selected index into scene properties when available.
@@ -348,22 +350,22 @@ class Canvas3DOrchestrator:
             return False
         # Mirror selection into scene custom properties if available
         try:
-            if context and hasattr(context, "scene") and getattr(context, "scene") is not None:
+            if context and hasattr(context, "scene") and context.scene is not None:
                 try:
                     context.scene["canvas3d_selected_request"] = request_id
                     context.scene["canvas3d_selected_variant_index"] = int(index)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as ex:
+                    logger.debug(f"Persist selected variant into scene failed: {ex}")
+        except Exception as ex:
+            logger.debug(f"Persist selected variant outer failed: {ex}")
 
         # Persist selection to history
         try:
             the_prompt = ""
             try:
                 the_prompt = get_prompt(context) or ""
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.debug(f"get_prompt failed: {ex}")
             append_history({
                 "type": "variant_selected",
                 "request_id": request_id,
@@ -381,7 +383,7 @@ class Canvas3DOrchestrator:
 
         # Execute on Blender's main thread if available
         self._set_status_main_thread(context, "Executing selected variant deterministically...")
-        def _exec_on_main():
+        def _exec_on_main() -> None:
             try:
                 commit_name = self.spec_executor.execute_scene_spec(
                     spec,
@@ -392,10 +394,10 @@ class Canvas3DOrchestrator:
                 )
                 # Mirror last committed collection name into scene property (best-effort)
                 try:
-                    if context and hasattr(context, "scene") and getattr(context, "scene") is not None:
+                    if context and hasattr(context, "scene") and context.scene is not None:
                         context.scene["canvas3d_last_collection"] = str(commit_name)
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logger.debug(f"Mirror last collection name failed: {ex}")
                 self._set_status_main_thread(context, f"Scene generated successfully (collection: {commit_name})")
                 logger.info(f"[{request_id}] Selected variant executed successfully. commit={commit_name}")
             except SpecExecutionError as e:
@@ -424,7 +426,7 @@ class Canvas3DOrchestrator:
                 logger.error(f"[{request_id}] Dry-run error (selected variant): {e}")
         return True
 
-    def execute_spec(self, spec: dict, context, label: str = "local_regen") -> bool:
+    def execute_spec(self, spec: dict, context: object, label: str = "local_regen") -> bool:
         """
         Execute a provided spec deterministically without calling the provider again.
         Appends a history entry with the full spec and mirrors the last committed collection
@@ -442,15 +444,15 @@ class Canvas3DOrchestrator:
                 },
                 "spec": spec,
             })
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.debug(f"append_history failed: {ex}")
 
         # Traversability gate for dungeon domain; abort early if unplayable
         if not self._traversability_gate(spec, request_id, context, label="local"):
             return False
         self._set_status_main_thread(context, "Executing spec (local) deterministically...")
 
-        def _exec_on_main():
+        def _exec_on_main() -> None:
             try:
                 commit_name = self.spec_executor.execute_scene_spec(
                     spec,
@@ -461,10 +463,10 @@ class Canvas3DOrchestrator:
                 )
                 # Mirror last committed collection into scene property
                 try:
-                    if context and hasattr(context, "scene") and getattr(context, "scene") is not None:
+                    if context and hasattr(context, "scene") and context.scene is not None:
                         context.scene["canvas3d_last_collection"] = str(commit_name)
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logger.debug(f"Mirror last collection name failed: {ex}")
                 self._set_status_main_thread(context, f"Local regeneration complete (collection: {commit_name})")
                 logger.info(f"[{request_id}] Local spec executed successfully. commit={commit_name}")
             except SpecExecutionError as e:
@@ -493,7 +495,7 @@ class Canvas3DOrchestrator:
                 logger.error(f"[{request_id}] Dry-run error (local regen): {e}")
         return True
 
-    def _worker_generate_scene(self, prompt: str, context, request_id: str) -> None:
+    def _worker_generate_scene(self, prompt: str, context: object, request_id: str) -> None:
         """Background thread: LLM orchestration (Claude) and scheduling spec-based execution."""
         start_ts = time.perf_counter()
         try:
@@ -512,7 +514,7 @@ class Canvas3DOrchestrator:
             else:
                 # Spec-based deterministic path: execute via SpecExecutor
                 self._set_status_main_thread(context, "Executing scene spec deterministically...")
-                def _exec_on_main_spec():
+                def _exec_on_main_spec() -> None:
                     try:
                         commit_name = self.spec_executor.execute_scene_spec(
                             scene_spec,
@@ -557,7 +559,7 @@ class Canvas3DOrchestrator:
             dur = time.perf_counter() - start_ts
             logger.info(f"[{request_id}] Orchestration finished in {dur:.2f}s")
 
-    def generate_scene(self, prompt, context) -> bool:
+    def generate_scene(self, prompt: str, context: object) -> bool:
         """
         Synchronous generation for compatibility (prefer start_generate_scene() for non-blocking).
         Uses spec-based deterministic executor unless legacy feature flag is enabled.
@@ -586,14 +588,14 @@ class Canvas3DOrchestrator:
             return False
 
 # Registration (no-op for now)
-def register():
+def register() -> None:
     pass
 
-def unregister():
+def unregister() -> None:
     pass
 # --- Orchestrator singleton for shared variant memory across operators ---
 
-_SINGLETON: Optional[Canvas3DOrchestrator] = None
+_SINGLETON: Canvas3DOrchestrator | None = None
 
 def get_orchestrator() -> Canvas3DOrchestrator:
     """

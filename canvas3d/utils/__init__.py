@@ -2,12 +2,13 @@
 
 from . import blender_helpers, validation
 
-def register():
+
+def register() -> None:
     """Register utility components."""
     blender_helpers.register()
     validation.register()
 
-def unregister():
+def unregister() -> None:
     """Unregister utility components."""
     validation.unregister()
     blender_helpers.unregister()

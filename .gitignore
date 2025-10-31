@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+.cache/
+
+# Coverage
+.coverage
+coverage.xml
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Front-end (Node/Vite) build artifacts
+front-end/node_modules/
+front-end/dist/
+front-end/.vite/
+canvas3d/ui/frontend/assets/
+
+# Logs and temp artifacts
+*.log
+a.txt
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Archives
+*.zip
+*.tar
+*.gz
+*.7z
+
+# Egg info at repo root or package
+canvas3d.egg-info/

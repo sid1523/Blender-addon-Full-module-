@@ -18,3 +18,13 @@ View your app in AI Studio: https://ai.studio/apps/drive/1Yv-Q1yClWsEXuO6N8Zl-Yd
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Integrate into Blender add-on
+
+After building, embed the front-end into the Blender add-on UI directory:
+
+```bash
+npm run integrate-addon
+```
+
+This installs dependencies, builds the front-end, and copies the `dist/` output into `canvas3d/ui/frontend`.

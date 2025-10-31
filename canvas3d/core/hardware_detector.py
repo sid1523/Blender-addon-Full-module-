@@ -25,7 +25,7 @@ QUALITY_PROFILES = {
     }
 }
 
-def get_gpu_vram_gb():
+def get_gpu_vram_gb() -> float | None:
     """Best-effort stub to estimate GPU VRAM (GB)."""
     # Environment override for testing/CI
     try:
@@ -33,8 +33,8 @@ def get_gpu_vram_gb():
         val = os.environ.get("GPU_VRAM_GB")
         if val:
             return float(val)
-    except Exception:
-        pass
+    except Exception as ex:
+        logger.debug("GPU_VRAM_GB env override parse failed: %s", ex)
 
     # Try Blender Cycles preferences to infer GPU usage (no direct VRAM API)
     try:
@@ -47,13 +47,13 @@ def get_gpu_vram_gb():
             if device_type and device_type.lower() != "none":
                 # If GPU compute is enabled, assume at least 6GB VRAM
                 return 6.0
-    except Exception:
-        pass
+    except Exception as ex:
+        logger.debug("Blender Cycles preference VRAM inference failed: %s", ex)
 
     # Unknown/CPU-only
     return None
 
-def detect_hardware_profile():
+def detect_hardware_profile() -> str:
     """Detect hardware capabilities and return quality profile."""
     try:
         import psutil
@@ -81,8 +81,8 @@ def detect_hardware_profile():
     return profile
 
 # Registration (no-op)
-def register():
+def register() -> None:
     pass
 
-def unregister():
+def unregister() -> None:
     pass

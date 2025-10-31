@@ -38,11 +38,11 @@ logger.addHandler(handler)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("requests").setLevel(logging.WARNING)
 
-def register():
+def register() -> None:
     """Register the add-on components."""
     logger.info("Registering Canvas3D add-on...")
     # Lazy import to avoid loading bpy/UI in non-Blender environments and tests
-    from . import ui, core, generation, utils
+    from . import core, generation, ui, utils
 
     # Register UI components first (panels, operators)
     ui.register()
@@ -58,11 +58,11 @@ def register():
 
     logger.info("Canvas3D add-on registered successfully.")
 
-def unregister():
+def unregister() -> None:
     """Unregister the add-on components."""
     logger.info("Unregistering Canvas3D add-on...")
     # Lazy import to avoid loading bpy/UI when running tests
-    from . import ui, core, generation, utils
+    from . import core, generation, ui, utils
 
     # Unregister in reverse order
     utils.unregister()

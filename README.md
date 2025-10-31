@@ -113,13 +113,13 @@ Development workflow
 
 Front-end development:
 - Prerequisite: Node.js
-- From project root, in `front-end` folder run:
-  - `npm install`
-  - `npm run dev`
-- To build production assets:
+- From project root, in `front-end` folder:
+  - Install and integrate into add-on: `npm run integrate-addon`
+  - Or for live dev server: `npm install && npm run dev`
+- To build production assets only:
   - `npm run build`
-- Built assets are copied into add-on package under `canvas3d/ui/frontend` by CI.
-- The e2e probe script can be compiled for a basic smoke test: [tools/e2e_llm_probe.py](tools/e2e_llm_probe.py:1)
+- Built assets are copied into add-on package under `canvas3d/ui/frontend` by CI or `integrate-addon`.
+- At runtime, enable the Front-End Server in Add-on Preferences (port configurable) and visit `http://127.0.0.1:<port>`.
 
 Versioning and changelog
 - Semantic versioning planned. Track releases in CHANGELOG.md (to be introduced alongside release process).

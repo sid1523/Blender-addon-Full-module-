@@ -20,9 +20,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable, Optional, Set, Tuple, List, Dict
 import heapq
+from collections.abc import Iterable
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,7 @@ class Cell:
     c: int
     r: int
 
-    def as_tuple(self) -> Tuple[int, int]:
+    def as_tuple(self) -> tuple[int, int]:
         return (self.c, self.r)
 
 
@@ -38,7 +38,7 @@ def _in_bounds(c: int, r: int, cols: int, rows: int) -> bool:
     return 0 <= c < cols and 0 <= r < rows
 
 
-def _neighbors_4(c: int, r: int, cols: int, rows: int) -> Iterable[Tuple[int, int]]:
+def _neighbors_4(c: int, r: int, cols: int, rows: int) -> Iterable[tuple[int, int]]:
     # 4-connected grid
     cand = ((c + 1, r), (c - 1, r), (c, r + 1), (c, r - 1))
     for cc, rr in cand:
@@ -46,17 +46,17 @@ def _neighbors_4(c: int, r: int, cols: int, rows: int) -> Iterable[Tuple[int, in
             yield (cc, rr)
 
 
-def _manhattan(a: Tuple[int, int], b: Tuple[int, int]) -> int:
+def _manhattan(a: tuple[int, int], b: tuple[int, int]) -> int:
     return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
 
 def astar_path_length(
     cols: int,
     rows: int,
-    blocked: Set[Tuple[int, int]],
-    start: Tuple[int, int],
-    goal: Tuple[int, int],
-) -> Optional[int]:
+    blocked: set[tuple[int, int]],
+    start: tuple[int, int],
+    goal: tuple[int, int],
+) -> int | None:
     """
     Compute shortest path length from start to goal using A* on a 4-connected grid.
     Returns the number of steps (edges) or None if no path exists.
@@ -68,10 +68,10 @@ def astar_path_length(
     if start in blocked or goal in blocked:
         return None
 
-    open_heap: List[Tuple[int, Tuple[int, int]]] = []
+    open_heap: list[tuple[int, tuple[int, int]]] = []
     heapq.heappush(open_heap, (0, start))
-    g_score: Dict[Tuple[int, int], int] = {start: 0}
-    closed: Set[Tuple[int, int]] = set()
+    g_score: dict[tuple[int, int], int] = {start: 0}
+    closed: set[tuple[int, int]] = set()
 
     while open_heap:
         _, cur = heapq.heappop(open_heap)
@@ -97,11 +97,11 @@ def astar_path_length(
 def check_traversable(
     cols: int,
     rows: int,
-    blocked: Set[Tuple[int, int]],
-    start: Tuple[int, int],
-    goal: Tuple[int, int],
-    min_len: Optional[int] = None,
-) -> Tuple[bool, Optional[int]]:
+    blocked: set[tuple[int, int]],
+    start: tuple[int, int],
+    goal: tuple[int, int],
+    min_len: int | None = None,
+) -> tuple[bool, int | None]:
     """
     Return (ok, path_len). ok is True if a path exists and satisfies min_len (if provided).
     """
@@ -116,7 +116,7 @@ def check_traversable(
 # -----------------------------
 # Spec integration (MVP stubs)
 # -----------------------------
-def _extract_grid_dims(spec: dict) -> Tuple[int, int]:
+def _extract_grid_dims(spec: dict) -> tuple[int, int]:
     grid = spec.get("grid") or {}
     dims = grid.get("dimensions") or {}
     cols = int(dims.get("cols", 0))
@@ -124,7 +124,7 @@ def _extract_grid_dims(spec: dict) -> Tuple[int, int]:
     return cols, rows
 
 
-def _extract_blocked_from_spec(spec: dict) -> Set[Tuple[int, int]]:
+def _extract_blocked_from_spec(spec: dict) -> set[tuple[int, int]]:
     """
     Derive blocked cells from the spec.
     Defaults to an empty set unless objects explicitly mark blocking.
@@ -135,8 +135,8 @@ def _extract_blocked_from_spec(spec: dict) -> Set[Tuple[int, int]]:
     - Doors are considered traversable (their cells are forced open).
     """
     cols, rows = _extract_grid_dims(spec)
-    blocked: Set[Tuple[int, int]] = set()
-    forced_open: Set[Tuple[int, int]] = set()
+    blocked: set[tuple[int, int]] = set()
+    forced_open: set[tuple[int, int]] = set()
 
     # Spec-level explicit traversable cells (optional)
     try:
@@ -199,7 +199,7 @@ def _extract_blocked_from_spec(spec: dict) -> Set[Tuple[int, int]]:
     return blocked
 
 
-def _default_start_goal(spec: dict, cols: int, rows: int) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+def _default_start_goal(spec: dict, cols: int, rows: int) -> tuple[tuple[int, int], tuple[int, int]]:
     """
     Default start/goal are the grid corners to align with unit tests:
     start = (0,0), goal = (cols-1, rows-1) when grid is valid.
@@ -211,10 +211,10 @@ def _default_start_goal(spec: dict, cols: int, rows: int) -> Tuple[Tuple[int, in
 
 def is_spec_traversable(
     spec: dict,
-    start: Optional[Tuple[int, int]] = None,
-    goal: Optional[Tuple[int, int]] = None,
-    min_len: Optional[int] = None,
-) -> Tuple[bool, Optional[int], Dict[str, object]]:
+    start: tuple[int, int] | None = None,
+    goal: tuple[int, int] | None = None,
+    min_len: int | None = None,
+) -> tuple[bool, int | None, dict[str, object]]:
     """
     Validate traversability for a scene spec on its grid.
     Returns (ok, path_len, info)

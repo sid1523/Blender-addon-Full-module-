@@ -25,7 +25,7 @@ import logging
 import os
 import threading
 import time
-from typing import Optional, Tuple, Dict, Any, List
+from typing import Any
 
 try:
     import bpy  # type: ignore
@@ -39,7 +39,7 @@ ADDON_ID = "canvas3d"
 
 # In-memory cache (thread-safe) for API keys and mock mode, with TTL
 _API_CACHE_LOCK = threading.Lock()
-_API_CACHE: Dict[str, Any] = {
+_API_CACHE: dict[str, Any] = {
     "openai": "",
     "mock": False,
     "ts": 0.0,
@@ -47,7 +47,7 @@ _API_CACHE: Dict[str, Any] = {
 _CACHE_TTL_SEC = 5.0  # small TTL to allow runtime rotation without heavy reads
 
 
-def _truthy(val: Any) -> bool:
+def _truthy(val: bool | str | int | float | None) -> bool:
     if isinstance(val, bool):
         return val
     if val is None:
@@ -62,8 +62,8 @@ def _mask(value: str, visible: int = 4) -> str:
     return ("*" * max(0, len(value) - visible)) + value[-visible:]
 
 
-def _config_paths() -> List[str]:
-    paths: List[str] = []
+def _config_paths() -> list[str]:
+    paths: list[str] = []
     # Windows
     appdata = os.environ.get("APPDATA")
     if appdata:
@@ -79,11 +79,11 @@ def _config_paths() -> List[str]:
     return paths
 
 
-def _load_config_file() -> Dict[str, Any]:
+def _load_config_file() -> dict[str, Any]:
     for path in _config_paths():
         try:
             if os.path.isfile(path):
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     data = json.load(f)
                     if isinstance(data, dict):
                         return data
@@ -92,7 +92,7 @@ def _load_config_file() -> Dict[str, Any]:
     return {}
 
 
-def get_addon_prefs():
+def get_addon_prefs() -> object | None:
     """
     Return the Canvas3D AddonPreferences instance or None if unavailable.
     Accesses Blender's preferences store for the add-on identified by ADDON_ID.
@@ -114,7 +114,7 @@ def get_addon_prefs():
         return None
 
 
-def _get_env_keys() -> Tuple[str, str, Optional[bool]]:
+def _get_env_keys() -> tuple[str, str, bool | None]:
     a = (
         os.environ.get("ANTHROPIC_API_KEY")
         or os.environ.get("CANVAS3D_ANTHROPIC_KEY")
@@ -126,16 +126,16 @@ def _get_env_keys() -> Tuple[str, str, Optional[bool]]:
         or ""
     )
     m_env = os.environ.get("CANVAS3D_MOCK_MODE")
-    m: Optional[bool] = _truthy(m_env) if m_env is not None else None
+    m: bool | None = _truthy(m_env) if m_env is not None else None
     return a, o, m
 
 
-def _get_config_keys() -> Tuple[str, str, Optional[bool]]:
+def _get_config_keys() -> tuple[str, str, bool | None]:
     cfg = _load_config_file()
     a = str(cfg.get("anthropic_api_key", "") or "")
     o = str(cfg.get("openai_api_key", "") or "")
     m_raw = cfg.get("mock_mode", None)
-    m: Optional[bool] = bool(m_raw) if isinstance(m_raw, bool) else (_truthy(m_raw) if m_raw is not None else None)
+    m: bool | None = bool(m_raw) if isinstance(m_raw, bool) else (_truthy(m_raw) if m_raw is not None else None)
     return a, o, m
 
 
@@ -145,7 +145,7 @@ def _should_reload_cache(now: float) -> bool:
     return (now - ts) > _CACHE_TTL_SEC
 
 
-def reload_api_keys() -> Tuple[str, str, bool]:
+def reload_api_keys() -> tuple[str, str, bool]:
     """
     Force reload API keys into cache (ignoring TTL).
     Returns (anthropic_key, openai_key, mock_mode).
@@ -155,7 +155,7 @@ def reload_api_keys() -> Tuple[str, str, bool]:
     return get_api_keys(force_reload=True)
 
 
-def get_api_keys(force_reload: bool = False) -> Tuple[str, str, bool]:
+def get_api_keys(force_reload: bool = False) -> tuple[str, str, bool]:  # noqa: C901
     """
     Retrieve Anthropic/OpenAI API keys and mock mode with precedence:
       1) Blender AddonPreferences (if available)
@@ -176,7 +176,7 @@ def get_api_keys(force_reload: bool = False) -> Tuple[str, str, bool]:
     # Preferences (highest precedence)
     anthropic = ""
     openai = ""
-    mock: Optional[bool] = None
+    mock: bool | None = None
 
     prefs = get_addon_prefs()
     if prefs is not None:
@@ -227,7 +227,7 @@ def get_api_keys(force_reload: bool = False) -> Tuple[str, str, bool]:
     return anthropic, openai, resolved_mock
 
 
-def set_status(context, text: str) -> None:
+def set_status(context: object, text: str) -> None:
     """
     Safely set the Canvas3D status text on the scene, if the property exists.
     This avoids attribute errors if the UI panel has not registered properties yet.
@@ -242,7 +242,7 @@ def set_status(context, text: str) -> None:
         logger.debug(f"Failed to set status: {ex}")
 
 
-def get_prompt(context) -> str:
+def get_prompt(context: object) -> str:
     """
     Retrieve the current Canvas3D prompt from the scene if available, else empty string.
     """
@@ -257,12 +257,12 @@ def get_prompt(context) -> str:
     return ""
 
 
-def register():
+def register() -> None:
     # No classes to register in utils
     pass
 
 
-def unregister():
+def unregister() -> None:
     # No classes to unregister in utils
     pass
 # --- Persistence helpers: config dir and generation history ---
@@ -280,7 +280,8 @@ def get_config_dir() -> str:
                 if not os.path.isdir(d):
                     os.makedirs(d, exist_ok=True)
                 return d
-            except Exception:
+            except Exception as ex:
+                logger.debug(f"get_config_dir: ensure dir failed for {d}: {ex}")
                 continue
     except Exception as ex:
         logger.debug(f"get_config_dir: could not resolve preferred paths: {ex}")
@@ -290,8 +291,8 @@ def get_config_dir() -> str:
     fallback = os.path.join(home, ".canvas3d")
     try:
         os.makedirs(fallback, exist_ok=True)
-    except Exception:
-        pass
+    except Exception as ex:
+        logger.debug(f"get_config_dir: fallback makedirs failed: {ex}")
     return fallback
 
 
@@ -304,7 +305,7 @@ def get_history_path() -> str:
     return os.path.join(cfg, "history.json")
 
 
-def append_history(entry: Dict[str, Any]) -> None:
+def append_history(entry: dict[str, Any]) -> None:
     """
     Append a single history entry to the Canvas3D history JSON file.
     The file format is a JSON array of objects. Non-array or corrupt files are reset.
@@ -314,7 +315,7 @@ def append_history(entry: Dict[str, Any]) -> None:
     # Read existing array or reset
     try:
         if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             if not isinstance(data, list):
                 data = []
@@ -339,16 +340,16 @@ def append_history(entry: Dict[str, Any]) -> None:
 # --- History reading helpers ---
 
 
-def read_history(limit: Optional[int] = None) -> List[Dict[str, Any]]:
+def read_history(limit: int | None = None) -> list[dict[str, Any]]:
     """
     Read the Canvas3D generation history JSON array.
     Returns a list of entries (dict). If limit is provided, returns the most recent N entries.
     """
     path = get_history_path()
-    data: List[Dict[str, Any]] = []
+    data: list[dict[str, Any]] = []
     try:
         if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 raw = json.load(f)
             if isinstance(raw, list):
                 data = raw
@@ -359,7 +360,7 @@ def read_history(limit: Optional[int] = None) -> List[Dict[str, Any]]:
         return data[-limit:]
     return data
 
-def summarize_history_entry(entry: Dict[str, Any]) -> str:
+def summarize_history_entry(entry: dict[str, Any]) -> str:
     """
     Produce a compact human-readable summary for a history entry.
     """
@@ -371,7 +372,7 @@ def summarize_history_entry(entry: Dict[str, Any]) -> str:
         spec = entry.get("spec", {}) or {}
         dom = str(spec.get("domain", entry.get("controls", {}).get("domain", "")) or "")
         ts = entry.get("ts", None)
-        parts: List[str] = []
+        parts: list[str] = []
         parts.append(typ)
         if dom:
             parts.append(f"domain={dom}")

@@ -6,15 +6,18 @@ from __future__ import annotations
 
 import json
 import logging
-import time
-import random
+import secrets
 import threading
-import hashlib
-import requests
-from typing import Any, Callable, Dict, Optional, Tuple, List
+import time
+from collections.abc import Callable
+from typing import Any, TypeVar
 
-from ..utils.blender_helpers import get_api_keys, get_addon_prefs
-from ..utils.spec_validation import validate_scene_spec, SpecValidationError
+import requests
+
+from ..utils.blender_helpers import get_addon_prefs, get_api_keys
+from ..utils.spec_validation import validate_scene_spec
+
+T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
@@ -156,37 +159,37 @@ class LLMInterface:
                     ep = str(getattr(prefs, "openai_endpoint", "") or "").strip()
                     if ep:
                         self.openai_endpoint = ep
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logger.debug("openai_endpoint preference read failed: %s", ex)
                 try:
                     mdl = str(getattr(prefs, "openai_model", "") or "").strip()
                     if mdl:
                         self.openai_model = mdl
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logger.debug("openai_model preference read failed: %s", ex)
                 try:
                     to = float(getattr(prefs, "request_timeout_sec", 0.0) or 0.0)
                     if to >= 1.0:
                         self.timeout_sec = to
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logger.debug("request_timeout_sec preference read failed: %s", ex)
         except Exception as ex:
             logger.debug(f"Provider config not loaded from AddonPreferences: {ex}")
 
     def _retry_with_backoff_jitter(
         self,
-        func: Callable[[], Any],
+        func: Callable[[], T],
         max_retries: int = 3,
         base_delay: float = 0.5,
         max_delay: float = 8.0,
-        request_id: Optional[str] = None,
-        on_success: Optional[Callable[[], None]] = None,
-        on_failure: Optional[Callable[[], None]] = None,
-    ) -> Any:
+        request_id: str | None = None,
+        on_success: Callable[[], None] | None = None,
+        on_failure: Callable[[], None] | None = None,
+    ) -> T:
         """Retry with exponential backoff and jitter."""
         req = request_id or "req-unknown"
         delay = base_delay
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for attempt in range(max_retries):
             try:
                 result = func()
@@ -199,15 +202,16 @@ class LLMInterface:
                     on_failure()
                 if attempt == max_retries - 1:
                     break
-                jitter = random.uniform(0.0, 0.25 * delay)
+                jitter = secrets.SystemRandom().uniform(0.0, 0.25 * delay)
                 sleep_for = min(max_delay, delay + jitter)
                 logger.warning(f"[{req}] Attempt {attempt+1} failed: {e}. Retrying in {sleep_for:.2f}s...")
                 time.sleep(sleep_for)
                 delay = min(max_delay, delay * 2.0)
-        assert last_exc is not None
+        if last_exc is None:
+            raise ProviderError(f"[{req}] Retry exhaustion without captured exception")
         raise last_exc
 
-    def _http_post(self, url: str, headers: Dict[str, str], payload: Dict[str, Any], timeout: float):
+    def _http_post(self, url: str, headers: dict[str, str], payload: dict[str, Any], timeout: float) -> requests.Response:
         """Execute HTTP POST with timeout."""
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=timeout)
@@ -260,7 +264,7 @@ class LLMInterface:
             return s[start:end + 1]
         return s[start:end_index + 1]
 
-    def _sanitize_and_validate_scene_spec(self, payload: Any, request_id: Optional[str] = None) -> Dict[str, Any]:
+    def _sanitize_and_validate_scene_spec(self, payload: object, request_id: str | None = None) -> dict[str, Any]:
         """Parse and validate scene spec JSON."""
         req = request_id or "req-unknown"
 
@@ -278,11 +282,11 @@ class LLMInterface:
                     try:
                         content = self._extract_json_balanced(stripped)
                         parsed = json.loads(content)
-                    except Exception:
+                    except Exception as ex:
                         snippet = raw[:200].replace("\n", " ")
                         raise ProviderError(
                             f"[{req}] OpenAI did not return valid JSON. Raw response (first 200 chars): {snippet}"
-                        )
+                        ) from ex
             spec = parsed
 
         ok, issues = validate_scene_spec(spec, expect_version="1.0.0")
@@ -291,13 +295,13 @@ class LLMInterface:
             raise ProviderError(f"[{req}] Generated spec failed validation: {summarized}")
         return spec
 
-    def get_scene_spec(
+    def get_scene_spec(  # noqa: C901
         self,
         prompt: str,
-        request_id: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        request_id: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> dict[str, Any]:
         """Get scene specification JSON from OpenAI ChatGPT."""
         req = request_id or "req-unknown"
 
@@ -309,7 +313,7 @@ class LLMInterface:
         if not self._openai_circuit.can_request():
             raise CircuitOpenError("OpenAI circuit open due to recent failures; retry later.")
 
-        def do_call():
+        def do_call() -> str:  # noqa: C901
             system_prompt = (
                 "You are an AI assistant that generates 3D scene specifications in JSON format. "
                 "Return ONLY a single valid JSON object conforming to the Canvas3D scene spec schema. "
@@ -393,15 +397,15 @@ class LLMInterface:
         spec = self._sanitize_and_validate_scene_spec(spec_text, request_id=req)
         return spec
 
-    def get_scene_spec_variants(
+    def get_scene_spec_variants(  # noqa: C901
         self,
         prompt: str,
-        controls: Optional[Dict[str, Any]] = None,
-        request_id: Optional[str] = None,
+        controls: dict[str, Any] | None = None,
+        request_id: str | None = None,
         count: int = 20,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> list[dict[str, Any]]:
         """Request a bundle of scene spec variants."""
         req = request_id or "req-unknown"
         controls = controls or {}
@@ -414,7 +418,7 @@ class LLMInterface:
         if not self._openai_circuit.can_request():
             raise CircuitOpenError("OpenAI circuit open.")
 
-        def _call_provider(n: int) -> Any:
+        def _call_provider(n: int) -> str:  # noqa: C901
             system_prompt = (
                 f"You are an AI assistant. Return ONLY a JSON object with key 'variants' containing "
                 f"an array of exactly {n} different Canvas3D scene specifications. "
@@ -474,7 +478,7 @@ class LLMInterface:
                 text = resp.text
             return text
 
-        def _attempt_with_fallback() -> List[Dict[str, Any]]:
+        def _attempt_with_fallback() -> list[dict[str, Any]]:
             try:
                 raw = self._retry_with_backoff_jitter(
                     func=lambda: _call_provider(count),
@@ -516,7 +520,7 @@ class LLMInterface:
                     bundle_right = self._parse_variants_bundle(right_raw, request_id=req)
 
                     seen = set()
-                    merged: List[Dict[str, Any]] = []
+                    merged: list[dict[str, Any]] = []
                     for spec in bundle_left + bundle_right:
                         try:
                             key = json.dumps(spec, sort_keys=True)
@@ -530,7 +534,7 @@ class LLMInterface:
 
         variants = _attempt_with_fallback()
 
-        validated: List[Dict[str, Any]] = []
+        validated: list[dict[str, Any]] = []
         dropped = 0
         for idx, spec in enumerate(variants):
             ok, issues = validate_scene_spec(spec, expect_version="1.0.0")
@@ -547,7 +551,7 @@ class LLMInterface:
 
         return validated
 
-    def _build_variants_prompt(self, prompt: str, controls: Dict[str, Any], count: int) -> str:
+    def _build_variants_prompt(self, prompt: str, controls: dict[str, Any], count: int) -> str:
         """Builds instruction string for variants bundle."""
         size = controls.get("size_scale", "medium")
         density = controls.get("complexity_density", "balanced")
@@ -576,7 +580,7 @@ class LLMInterface:
             "Return only JSON."
         )
 
-    def _parse_variants_bundle(self, payload: Any, request_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def _parse_variants_bundle(self, payload: object, request_id: str | None = None) -> list[dict[str, Any]]:
         """Parse variants bundle from provider response."""
         req = request_id or "req-unknown"
         try:
@@ -591,22 +595,22 @@ class LLMInterface:
         if not isinstance(data, dict) or "variants" not in data or not isinstance(data["variants"], list):
             raise ProviderError(f"[{req}] Expected object with 'variants' array")
 
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for it in data["variants"]:
             if isinstance(it, dict):
                 out.append(it)
         return out
 
-    def get_enhancement_ideas(
+    def get_enhancement_ideas(  # noqa: C901
         self,
         prompt: str,
-        selected_spec: Dict[str, Any],
-        controls: Optional[Dict[str, Any]] = None,
-        request_id: Optional[str] = None,
+        selected_spec: dict[str, Any],
+        controls: dict[str, Any] | None = None,
+        request_id: str | None = None,
         count: int = 12,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-    ) -> List[str]:
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> list[str]:
         """Request enhancement ideas for a selected spec."""
         req = request_id or "req-unknown"
         controls = controls or {}
@@ -618,7 +622,7 @@ class LLMInterface:
         if not self._openai_circuit.can_request():
             raise CircuitOpenError("Circuit open.")
 
-        def do_call():
+        def do_call() -> str:  # noqa: C901
             system_prompt = (
                 f"You are an AI assistant. Return ONLY a JSON object with key 'ideas' containing "
                 f"an array of exactly {count} short, distinct improvement ideas for the provided Canvas3D scene spec. "
@@ -702,7 +706,7 @@ class LLMInterface:
         if not isinstance(ideas, list) or not all(isinstance(x, str) and x.strip() for x in ideas):
             raise ProviderError(f"[{req}] No valid ideas")
 
-        out: List[str] = []
+        out: list[str] = []
         seen = set()
         for s in ideas:
             k = s.strip()
@@ -715,7 +719,7 @@ class LLMInterface:
             raise ProviderError(f"[{req}] No usable ideas")
         return out
 
-    def _parse_ideas_bundle(self, payload: Any, request_id: Optional[str] = None) -> List[str]:
+    def _parse_ideas_bundle(self, payload: object, request_id: str | None = None) -> list[str]:
         """Parse ideas bundle from provider response."""
         req = request_id or "req-unknown"
         data: Any = None
@@ -731,7 +735,7 @@ class LLMInterface:
             except Exception as ex:
                 raise ProviderError(f"[{req}] Ideas response invalid: {ex}") from ex
 
-        ideas: List[str] = []
+        ideas: list[str] = []
         if isinstance(data, dict) and isinstance(data.get("ideas"), list):
             for it in data["ideas"]:
                 if isinstance(it, str):
@@ -748,8 +752,8 @@ class LLMInterface:
         return self._last_raw
 
 
-def register():
+def register() -> None:
     pass
 
-def unregister():
+def unregister() -> None:
     pass
